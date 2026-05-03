@@ -1,0 +1,8 @@
+# Default owners for everything in the repo
+* @koffeyai
+
+# AI gateway and skills
+supabase/functions/unified-chat/ @koffeyai
+
+# Database schema
+supabase/migrations/ @koffeyai

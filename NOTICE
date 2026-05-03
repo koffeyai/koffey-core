@@ -1,0 +1,19 @@
+Koffey.ai — AI-Native Chat-First CRM
+Copyright (c) 2025-present Koffey.ai Contributors
+
+This software is licensed under the GNU Affero General Public License v3.0.
+See LICENSE for the full license text.
+
+Koffey.ai uses the following open source components:
+
+- React (MIT License) — https://reactjs.org
+- Supabase (MIT License) — https://supabase.com
+- Tailwind CSS (MIT License) — https://tailwindcss.com
+- shadcn/ui (MIT License) — https://ui.shadcn.com
+- Radix UI (MIT License) — https://radix-ui.com
+- TanStack Query (MIT License) — https://tanstack.com/query
+- Zustand (MIT License) — https://zustand-demo.pmnd.rs
+- Vite (MIT License) — https://vitejs.dev
+- date-fns (MIT License) — https://date-fns.org
+- Recharts (MIT License) — https://recharts.org
+- Lucide Icons (ISC License) — https://lucide.dev

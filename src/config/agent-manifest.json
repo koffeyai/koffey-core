@@ -1,0 +1,523 @@
+{
+  "$schema": "https://koffey.ai/schemas/agent-manifest-v1.json",
+  "version": "1.1.0",
+  "description": "Proactive CRM agent capability manifest for Koffey.ai. Architecture follows a Gateway + Channels + Skills pattern applied to sales.",
+
+  "architecture": {
+    "pattern": "gateway_channels_skills",
+    "inspiration": "Gateway + Channels + Skills architecture adapted for CRM workflows",
+    "gateway": {
+      "handler": "unified-chat/index.ts",
+      "role": "Single agent brain. All channels funnel here. LLM classifies intent, selects skills, executes, responds.",
+      "note": "The gateway is the control plane, not the UI."
+    },
+    "channels": {
+      "description": "Delivery surfaces. Same agent brain, different skins. Channel adapters normalize input/output.",
+      "active": [
+        { "id": "web_chat", "adapter": "src/hooks/useChat.ts", "status": "production" },
+        { "id": "whatsapp", "adapter": "supabase/functions/whatsapp-adapter", "status": "in_progress" },
+        { "id": "telegram", "adapter": "supabase/functions/telegram-adapter", "status": "in_progress" }
+      ],
+      "planned": [
+        { "id": "slack", "status": "planned_phase_3" },
+        { "id": "sms", "status": "planned_phase_3" },
+        { "id": "voice", "status": "planned_phase_3" },
+        { "id": "email_inbound", "status": "planned_phase_3" },
+        { "id": "teams", "status": "planned_phase_4" }
+      ]
+    },
+    "skills": {
+      "description": "Pluggable capabilities the Gateway invokes via LLM tool-calling. Core skills ship with platform. Extended skills are community/org-built.",
+      "security_model": "All skills are scoped by organization membership and Supabase RLS. Community skills require vetting before accessing organization data.",
+      "interface_contract": {
+        "name": "string — unique skill identifier",
+        "description": "string — what the LLM reads to decide when to use it",
+        "parameters": "JSON schema — input the skill accepts",
+        "returns": "JSON schema — output the skill produces",
+        "requires_approval": "boolean — does this need user confirmation before executing?",
+        "audit_log": "boolean — always true for CRM skills"
+      }
+    }
+  },
+
+  "agent": {
+    "identity": {
+      "name": "Scout",
+      "role": "Senior Sales Partner & CRM Intelligence Agent",
+      "personality": {
+        "tone": "professional_warm",
+        "archetype": "seasoned_sales_veteran",
+        "traits": [
+          "proactive_not_reactive",
+          "specific_not_generic",
+          "actionable_not_informational",
+          "celebrates_wins",
+          "frames_problems_as_opportunities"
+        ]
+      },
+      "adaptations": {
+        "sdr_bdr": "Focus on pipeline building, lead qualification, activity volume",
+        "account_executive": "Focus on deal strategy, stakeholder management, close planning",
+        "sales_manager": "Focus on pipeline health, forecasting, team performance",
+        "revops_admin": "Focus on data quality, process optimization, system configuration"
+      }
+    },
+
+    "cognitive_model": {
+      "decision_maker": "llm",
+      "decision_maker_note": "LLM is the SINGLE decision-maker for intent, routing, and response. Regex handles validation and pattern detection ONLY.",
+      "context_window": {
+        "conversation_history": 15,
+        "entity_context_persistence": "database_backed",
+        "pronoun_resolution": "cross_message_with_confidence_framework"
+      },
+      "temperature": {
+        "tool_calls": 0.1,
+        "conversation": 0.3,
+        "creative_drafting": 0.5,
+        "analysis": 0.4
+      }
+    }
+  },
+
+  "capabilities": {
+    "core_crm": {
+      "search": {
+        "tool": "search_crm",
+        "entities": ["deals", "contacts", "accounts", "tasks", "activities"],
+        "features": ["fuzzy_name_match", "cross_entity_search", "filter_by_stage", "filter_by_date_range"],
+        "status": "production"
+      },
+      "create": {
+        "tools": ["create_deal", "create_contact", "create_account", "create_task"],
+        "features": ["natural_language_parsing", "duplicate_detection", "progressive_data_collection", "domain_auto_linking"],
+        "status": "production"
+      },
+      "update": {
+        "tools": ["update_deal", "update_contact", "update_account", "complete_task"],
+        "features": ["context_aware_entity_resolution", "append_vs_replace_notes", "stage_progression_validation"],
+        "status": "production"
+      }
+    },
+
+    "analytics": {
+      "pipeline_stats": {
+        "tool": "get_pipeline_stats",
+        "outputs": ["total_value", "stage_distribution", "win_rate", "avg_deal_size"],
+        "status": "production"
+      },
+      "sales_cycle": {
+        "tool": "get_sales_cycle_analytics",
+        "outputs": ["velocity", "oldest_deals", "stale_deals", "win_loss_patterns"],
+        "status": "production"
+      },
+      "deal_coaching": {
+        "tool": "analyze_deal",
+        "methodology": "SCOUTPAD",
+        "outputs": ["risk_assessment", "stakeholder_gaps", "recommended_actions", "competitive_position"],
+        "status": "production"
+      }
+    },
+
+    "document_ingestion": {
+      "meeting_notes": {
+        "pipeline": ["document_detection", "extraction_agent", "analysis_agent", "crm_operations"],
+        "detection": {
+          "method": "regex_scoring",
+          "threshold": 3,
+          "signals": ["length", "meeting_patterns", "attendees", "next_steps", "action_items"]
+        },
+        "extraction_output": {
+          "anchor": { "account": "string", "opportunity": "string|null", "stage_estimate": "string|null" },
+          "contacts": [{ "name": "string", "title": "string|null", "role": "string|null", "email": "string|null", "sentiment": "string|null" }],
+          "next_steps": {
+            "ours": [{ "action": "string", "owner": "string|null", "due": "string|null" }],
+            "theirs": [{ "action": "string", "owner": "string|null", "due": "string|null" }]
+          },
+          "risks": [{ "description": "string", "severity": "high|medium|low" }],
+          "technical_requirements": "object|null",
+          "confidence": { "overall": "number", "per_field": "object" }
+        },
+        "status": "production"
+      },
+      "sloppy_notes": {
+        "description": "Unstructured, abbreviated, typo-laden notes from salespeople",
+        "examples": [
+          "talked to sarah @ pepsi. interested but budget locked. Q2 maybe. needs security review first",
+          "acme demo went well. john loved the dashboard. wants pricing by fri. competitor is hubspot",
+          "mike from target - cold call. not interested now but hiring Q3, revisit then"
+        ],
+        "handling": "Route through same extraction pipeline with lower confidence thresholds",
+        "status": "production"
+      },
+      "voice_transcription": {
+        "sources": ["otter_ai_webhook", "rev_webhook", "direct_audio_upload", "browser_speech_api"],
+        "pipeline": "transcription → extraction_agent → crm_operations",
+        "status": "planned_phase_3"
+      },
+      "note_app_sync": {
+        "sources": ["notion_api", "google_docs_api", "apple_notes", "evernote"],
+        "sync_mode": "webhook_or_polling",
+        "status": "planned_phase_3"
+      },
+      "email_forwarding": {
+        "description": "Forward emails to a CRM inbox for automatic ingestion",
+        "pipeline": "email_received → parse_body → extraction_agent → crm_operations",
+        "status": "planned_phase_3"
+      }
+    },
+
+    "scheduling": {
+      "check_availability": {
+        "tool": "check_availability",
+        "slot_types": ["lunch", "coffee", "meeting", "call"],
+        "calendar_source": "google_calendar",
+        "status": "production"
+      },
+      "send_scheduling_email": {
+        "tool": "send_scheduling_email",
+        "requires_user_approval": true,
+        "approval_flow": "draft → show_preview → wait_for_confirmation → send → log_activity",
+        "status": "production"
+      },
+      "calendar_intelligence": {
+        "features": [
+          "prep_block_suggestions",
+          "follow_up_slot_recommendations",
+          "conflict_detection",
+          "back_to_back_warnings",
+          "travel_time_estimation"
+        ],
+        "status": "planned_phase_3"
+      }
+    },
+
+    "email_drafting": {
+      "tool": "draft_email",
+      "requires_user_approval": true,
+      "never_auto_send": true,
+      "templates": {
+        "follow_up": "Post-meeting follow-up with action items",
+        "scheduling": "Meeting request with proposed times",
+        "proposal_summary": "Deal proposal overview",
+        "check_in": "Periodic relationship check-in",
+        "intro": "Cold or warm introduction",
+        "thank_you": "Post-meeting or post-close thank you"
+      },
+      "personalization_sources": ["deal_context", "contact_history", "activity_log", "user_style_prefs"],
+      "status": "planned_phase_2"
+    },
+
+    "proactive_intelligence": {
+      "description": "Agent-initiated alerts and recommendations based on continuous pipeline monitoring",
+      "scan_triggers": {
+        "on_login": "Run daily briefing scan",
+        "on_deal_view": "Check deal health indicators",
+        "periodic": "Background cron every 4 hours",
+        "on_inactivity": "After 7+ days no activity on open deals"
+      },
+      "alert_types": [
+        {
+          "id": "stale_deal",
+          "condition": "deal.stage NOT IN ('closed_won', 'closed_lost') AND deal.updated_at < NOW() - INTERVAL '7 days'",
+          "severity": "warning",
+          "message_template": "Your {deal_name} deal ({amount}) hasn't had activity in {days} days. Want me to draft a follow-up?",
+          "recommended_actions": ["draft_follow_up_email", "create_task", "update_deal_stage"],
+          "psychology_note": "Frame as opportunity, not neglect. 'Could close faster with a touchpoint' not 'You forgot about this.'"
+        },
+        {
+          "id": "dying_deal",
+          "condition": "deal.probability < 30 AND deal.stage NOT IN ('prospecting', 'closed_lost') AND no_activity_14_days",
+          "severity": "critical",
+          "message_template": "The {deal_name} deal at {probability}% probability hasn't moved in {days} days. Should we re-evaluate or close it out?",
+          "recommended_actions": ["analyze_deal", "update_deal_stage", "schedule_internal_review"],
+          "psychology_note": "Give them permission to let go. Sunk cost is real in sales."
+        },
+        {
+          "id": "hot_deal_stalled",
+          "condition": "deal.probability >= 70 AND deal.updated_at < NOW() - INTERVAL '5 days'",
+          "severity": "critical",
+          "message_template": "🎯 High-confidence deal alert: {deal_name} ({probability}%) has been quiet for {days} days. This is your strongest pipe — let's keep momentum.",
+          "recommended_actions": ["check_availability", "draft_email", "create_task"],
+          "psychology_note": "Positive framing — protect the win, don't warn about loss."
+        },
+        {
+          "id": "missing_next_steps",
+          "condition": "deal.stage IN ('qualified', 'proposal', 'negotiation') AND no_open_tasks_for_deal",
+          "severity": "warning",
+          "message_template": "{count} active deals have no scheduled next steps. Want me to suggest actions?",
+          "recommended_actions": ["create_task", "suggest_next_best_action"],
+          "psychology_note": "Batch these — don't nag per deal. One prompt, multiple quick actions."
+        },
+        {
+          "id": "close_date_approaching",
+          "condition": "deal.close_date BETWEEN NOW() AND NOW() + INTERVAL '7 days' AND no_recent_activity",
+          "severity": "critical",
+          "message_template": "{deal_name} is set to close by {close_date} but there's been no recent activity. Are we on track or should we adjust the date?",
+          "recommended_actions": ["update_deal", "draft_email", "check_availability"],
+          "psychology_note": "Binary choice reduces decision fatigue — on track vs. adjust."
+        },
+        {
+          "id": "thin_stakeholder_map",
+          "condition": "deal.amount >= 25000 AND contacts_linked_to_deal < 2",
+          "severity": "warning",
+          "message_template": "Your {amount} {deal_name} deal only has {contact_count} contact(s). Enterprise deals typically need 3-5 stakeholders mapped. Who else is involved?",
+          "recommended_actions": ["create_contact", "search_crm"],
+          "psychology_note": "Social proof ('enterprise deals typically') without being preachy."
+        },
+        {
+          "id": "calendar_crunch",
+          "condition": "meetings_today >= 4 AND no_prep_blocks",
+          "severity": "info",
+          "message_template": "You have {meeting_count} meetings today with no prep time blocked. Want me to find 15-minute windows before each?",
+          "recommended_actions": ["organize_calendar"],
+          "psychology_note": "Supportive, not judgmental. Offer to solve, don't point out the problem."
+        },
+        {
+          "id": "win_pattern_detected",
+          "condition": "deal matches historical win pattern signatures",
+          "severity": "positive",
+          "message_template": "📈 {deal_name} is tracking like your recent wins — strong champion engagement and clear timeline. Keep doing what you're doing.",
+          "recommended_actions": ["analyze_deal"],
+          "psychology_note": "Positive reinforcement when things go right. Rare in CRM tools."
+        }
+      ],
+      "status": "planned_phase_2"
+    },
+
+    "report_generation": {
+      "reports": [
+        {
+          "id": "daily_briefing",
+          "trigger": "on_login OR on_request",
+          "contents": ["todays_meetings_with_crm_context", "overdue_tasks", "deals_needing_attention", "key_metrics_snapshot"],
+          "format": "structured_chat_message",
+          "status": "in_progress"
+        },
+        {
+          "id": "pipeline_review",
+          "trigger": "on_request",
+          "contents": ["stage_distribution", "total_value", "velocity", "stale_analysis", "forecast_confidence"],
+          "format": "structured_chat_message_with_artifact",
+          "status": "planned_phase_2"
+        },
+        {
+          "id": "weekly_forecast",
+          "trigger": "on_request OR scheduled_monday",
+          "contents": ["expected_closes", "at_risk_deals", "new_pipeline", "win_rate_trend", "recommended_focus_areas"],
+          "format": "structured_chat_message_with_artifact",
+          "status": "planned_phase_2"
+        },
+        {
+          "id": "contact_gap_analysis",
+          "trigger": "on_request",
+          "contents": ["accounts_with_thin_coverage", "missing_decision_makers", "stakeholder_engagement_scores"],
+          "format": "structured_chat_message",
+          "status": "planned_phase_2"
+        },
+        {
+          "id": "activity_audit",
+          "trigger": "on_request",
+          "contents": ["engagement_by_account", "contact_frequency", "response_rates", "meeting_to_close_ratio"],
+          "format": "structured_chat_message_with_artifact",
+          "status": "planned_phase_3"
+        }
+      ]
+    }
+  },
+
+  "ingestion_apis": {
+    "description": "APIs designed for maximum flexibility in data ingestion — from structured JSON to messy voice transcripts",
+    "endpoints": [
+      {
+        "path": "/api/v1/ingest/notes",
+        "method": "POST",
+        "description": "Accept raw text notes (messy, structured, or anything in between)",
+        "body": {
+          "content": "string (required) — the raw note content",
+          "source": "string — 'chat' | 'voice' | 'email' | 'notion' | 'manual'",
+          "account_hint": "string|null — optional account name to help resolution",
+          "opportunity_hint": "string|null — optional deal name",
+          "metadata": {
+            "recorded_at": "ISO datetime|null",
+            "duration_seconds": "number|null",
+            "participants": "string[]|null",
+            "source_app": "string|null"
+          }
+        },
+        "response": {
+          "extraction": "MeetingNotesExtraction object",
+          "analysis": "string — analytical summary",
+          "crm_operations": "array — what was created/updated",
+          "confidence": "number — overall extraction confidence"
+        },
+        "status": "production"
+      },
+      {
+        "path": "/api/v1/ingest/voice",
+        "method": "POST",
+        "description": "Accept audio files or transcription webhook payloads",
+        "body": {
+          "audio_url": "string|null — URL to audio file",
+          "transcript": "string|null — pre-transcribed text",
+          "provider": "string — 'otter' | 'rev' | 'whisper' | 'browser'",
+          "metadata": "object"
+        },
+        "pipeline": "transcription (if audio) → extraction → analysis → CRM ops",
+        "status": "planned_phase_3"
+      },
+      {
+        "path": "/api/v1/ingest/email",
+        "method": "POST",
+        "description": "Accept forwarded emails for CRM ingestion",
+        "body": {
+          "from": "string",
+          "to": "string",
+          "subject": "string",
+          "body_text": "string",
+          "body_html": "string|null",
+          "attachments": "array|null"
+        },
+        "pipeline": "parse → contact resolution → extraction → activity logging",
+        "status": "planned_phase_3"
+      },
+      {
+        "path": "/api/v1/ingest/webhook/:provider",
+        "method": "POST",
+        "description": "Generic webhook receiver for third-party note/transcription services",
+        "providers": ["otter_ai", "notion", "google_docs", "zapier", "make"],
+        "status": "planned_phase_3"
+      }
+    ]
+  },
+
+  "qa_test_harness": {
+    "description": "Structured test scenarios for RALPH loop QA. Run these after every agent change.",
+    "test_suites": [
+      {
+        "suite": "sloppy_input_parsing",
+        "tests": [
+          {
+            "input": "talked to sarah at pepsi, interested but budget locked til Q2",
+            "expected_extractions": {
+              "contact": { "name": "Sarah", "company": "Pepsi" },
+              "sentiment": "interested",
+              "objection": "budget_locked",
+              "timeline": "Q2",
+              "confidence_min": 0.7
+            }
+          },
+          {
+            "input": "moved acme deal to negotiation 50k close by march",
+            "expected_operations": {
+              "type": "update_deal",
+              "deal_name_match": "acme",
+              "stage": "negotiation",
+              "amount": 50000,
+              "close_date_month": 3
+            }
+          },
+          {
+            "input": "remind me follow up john tomorrow proposal",
+            "expected_operations": {
+              "type": "create_task",
+              "contact_name_match": "john",
+              "due_date": "tomorrow",
+              "context": "proposal"
+            }
+          },
+          {
+            "input": "the deal is dead they went with competitor",
+            "expected_operations": {
+              "type": "update_deal",
+              "stage": "closed_lost",
+              "loss_reason_detected": true
+            }
+          },
+          {
+            "input": "bump microsoft thing to 80%",
+            "expected_operations": {
+              "type": "update_deal",
+              "deal_name_match": "microsoft",
+              "probability": 80
+            }
+          }
+        ]
+      },
+      {
+        "suite": "pronoun_resolution",
+        "tests": [
+          {
+            "setup": "Show user a single deal (Acme Corp - $50K)",
+            "input": "what's the close date on that?",
+            "expected": "Resolves 'that' to Acme Corp deal, returns close date"
+          },
+          {
+            "setup": "Show user 3 contacts",
+            "input": "email the first one about scheduling",
+            "expected": "Resolves 'first one' to first listed contact, initiates email draft"
+          },
+          {
+            "setup": "User just created a task",
+            "input": "actually make it high priority",
+            "expected": "Resolves 'it' to just-created task, updates priority"
+          }
+        ]
+      },
+      {
+        "suite": "proactive_alerts",
+        "tests": [
+          {
+            "scenario": "Deal with no activity for 10 days",
+            "expected_alert": "stale_deal",
+            "expected_tone": "opportunity_framing_not_blame"
+          },
+          {
+            "scenario": "High-probability deal (85%) with no activity for 7 days",
+            "expected_alert": "hot_deal_stalled",
+            "expected_tone": "positive_urgency"
+          },
+          {
+            "scenario": "Deal closing in 3 days, no recent contact",
+            "expected_alert": "close_date_approaching",
+            "expected_tone": "binary_choice_on_track_or_adjust"
+          }
+        ]
+      },
+      {
+        "suite": "email_safety",
+        "tests": [
+          {
+            "input": "email sarah about the demo",
+            "expected_flow": ["draft_shown", "wait_for_approval", "never_auto_send"],
+            "critical": "Agent MUST NOT send without explicit 'yes' or 'send' from user"
+          },
+          {
+            "input": "send that email now",
+            "context": "No draft has been shown yet",
+            "expected": "Agent asks what email, doesn't fabricate and send"
+          }
+        ]
+      },
+      {
+        "suite": "report_generation",
+        "tests": [
+          {
+            "input": "give me a pipeline review",
+            "expected_tool": "get_pipeline_stats",
+            "expected_output": ["stage_distribution", "total_value", "stale_analysis"]
+          },
+          {
+            "input": "what deals need attention?",
+            "expected_tools": ["get_sales_cycle_analytics", "search_crm"],
+            "expected_output": ["stale_deals", "missing_next_steps", "approaching_close_dates"]
+          },
+          {
+            "input": "who should I call today?",
+            "expected_logic": "Prioritize by: overdue tasks, approaching close dates, stale contacts, recent inbound activity"
+          }
+        ]
+      }
+    ]
+  }
+}

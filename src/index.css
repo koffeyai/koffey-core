@@ -1,0 +1,274 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===============================================
+   Nobel Editorial Theme - Sophisticated & Elegant
+   =============================================== */
+
+@layer base {
+  :root {
+    /* Cream/paper background */
+    --background: 45 33% 97%;
+    --foreground: 0 0% 10%;
+
+    /* Card surfaces */
+    --card: 45 30% 99%;
+    --card-foreground: 0 0% 10%;
+
+    /* Popover */
+    --popover: 45 30% 99%;
+    --popover-foreground: 0 0% 10%;
+
+    /* Primary - Nobel Gold */
+    --primary: 39 51% 56%;
+    --primary-foreground: 45 33% 97%;
+
+    /* Secondary - Stone */
+    --secondary: 30 10% 94%;
+    --secondary-foreground: 0 0% 25%;
+
+    /* Muted tones */
+    --muted: 30 8% 92%;
+    --muted-foreground: 0 0% 45%;
+
+    /* Accent - Subtle gold highlight */
+    --accent: 39 45% 92%;
+    --accent-foreground: 39 51% 40%;
+
+    /* Functional colors */
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Borders and inputs */
+    --border: 30 12% 88%;
+    --input: 30 12% 88%;
+    --ring: 39 51% 56%;
+
+    /* Chart colors - sophisticated palette */
+    --chart-1: 39 51% 56%;
+    --chart-2: 220 60% 55%;
+    --chart-3: 0 65% 55%;
+    --chart-4: 160 50% 45%;
+    --chart-5: 280 45% 55%;
+
+    /* Sidebar */
+    --sidebar-background: 40 20% 96%;
+    --sidebar-foreground: 0 0% 25%;
+    --sidebar-primary: 39 51% 56%;
+    --sidebar-primary-foreground: 45 33% 97%;
+    --sidebar-accent: 39 35% 92%;
+    --sidebar-accent-foreground: 0 0% 25%;
+    --sidebar-border: 30 12% 88%;
+    --sidebar-ring: 39 51% 56%;
+
+    /* Nobel Gold accent */
+    --nobel-gold: 39 51% 56%;
+    --nobel-cream: 45 33% 97%;
+    --nobel-stone: 30 10% 45%;
+
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    /* Deep charcoal background */
+    --background: 0 0% 10%;
+    --foreground: 30 15% 92%;
+
+    /* Card surfaces */
+    --card: 0 0% 12%;
+    --card-foreground: 30 15% 92%;
+
+    /* Popover */
+    --popover: 0 0% 11%;
+    --popover-foreground: 30 15% 92%;
+
+    /* Primary - Glowing Nobel Gold */
+    --primary: 39 60% 58%;
+    --primary-foreground: 0 0% 10%;
+
+    /* Secondary */
+    --secondary: 0 0% 18%;
+    --secondary-foreground: 30 10% 80%;
+
+    /* Muted */
+    --muted: 0 0% 20%;
+    --muted-foreground: 0 0% 55%;
+
+    /* Accent */
+    --accent: 39 40% 18%;
+    --accent-foreground: 39 60% 70%;
+
+    /* Functional */
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Borders */
+    --border: 0 0% 20%;
+    --input: 0 0% 20%;
+    --ring: 39 60% 58%;
+
+    /* Charts */
+    --chart-1: 39 60% 60%;
+    --chart-2: 220 55% 55%;
+    --chart-3: 0 60% 55%;
+    --chart-4: 160 45% 50%;
+    --chart-5: 280 40% 55%;
+
+    /* Sidebar */
+    --sidebar-background: 0 0% 11%;
+    --sidebar-foreground: 30 10% 80%;
+    --sidebar-primary: 39 60% 58%;
+    --sidebar-primary-foreground: 0 0% 10%;
+    --sidebar-accent: 39 25% 15%;
+    --sidebar-accent-foreground: 30 10% 80%;
+    --sidebar-border: 0 0% 18%;
+    --sidebar-ring: 39 60% 58%;
+
+    --nobel-gold: 39 60% 58%;
+    --nobel-cream: 0 0% 10%;
+    --nobel-stone: 30 8% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', sans-serif;
+  }
+}
+
+/* Serif headings */
+.font-serif {
+  font-family: 'Playfair Display', serif;
+}
+
+/* Browser-specific prompt text rendering fixes */
+.prompt-text-fix {
+  font-family: "Courier New", "Liberation Mono", "DejaVu Sans Mono", monospace !important;
+  font-size: 13px !important;
+  line-height: 18px !important;
+  font-weight: 400 !important;
+  letter-spacing: 0 !important;
+  word-break: normal !important;
+  overflow-wrap: normal !important;
+  white-space: pre-wrap !important;
+  -webkit-font-smoothing: antialiased !important;
+  -moz-osx-font-smoothing: grayscale !important;
+  text-rendering: optimizeLegibility !important;
+  font-variant-ligatures: none !important;
+  font-feature-settings: "liga" 0 !important;
+}
+
+/* Autofill detection animations */
+@keyframes onAutoFillStart {
+  from {/**/}
+  to {/**/}
+}
+
+@keyframes onAutoFillCancel {
+  from {/**/}
+  to {/**/}
+}
+
+input:-webkit-autofill {
+  animation: onAutoFillStart 200ms;
+}
+
+input:not(:-webkit-autofill) {
+  animation: onAutoFillCancel 200ms;
+}
+
+/* Chat interface animations */
+@keyframes slide-in-from-bottom {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-in {
+  animation: slide-in-from-bottom 0.3s ease-out;
+}
+
+.slide-in-from-bottom-2 {
+  animation: slide-in-from-bottom 0.3s ease-out;
+}
+
+/* Smooth transitions for chat elements */
+.chat-transition {
+  transition: all 0.2s ease-in-out;
+}
+
+.chat-message-hover:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.chat-button-hover:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/* Nobel gold text gradient */
+.text-gradient {
+  background: linear-gradient(135deg, hsl(var(--primary)), hsl(39 35% 70%));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Nobel gold glow */
+.highlight-gold {
+  box-shadow: 0 0 30px hsla(39, 51%, 56%, 0.2);
+}
+
+/* Editorial underline animation */
+.story-link {
+  position: relative;
+  display: inline-block;
+}
+
+.story-link::after {
+  content: '';
+  position: absolute;
+  width: 100%;
+  transform: scaleX(0);
+  height: 2px;
+  bottom: -2px;
+  left: 0;
+  background: hsl(var(--primary));
+  transform-origin: bottom right;
+  transition: transform 0.3s ease-out;
+}
+
+.story-link:hover::after {
+  transform: scaleX(1);
+  transform-origin: bottom left;
+}
+
+/* Hover scale effect */
+.hover-scale {
+  transition: transform 0.2s ease;
+}
+
+.hover-scale:hover {
+  transform: scale(1.02);
+}
