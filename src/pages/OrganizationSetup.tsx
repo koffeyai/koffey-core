@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Building, Mail, Users } from 'lucide-react';
 import { clearPendingOrgSetup, loadPendingOrgSetup } from '@/lib/pendingOrgSetup';
+import { invalidateOrganizationAccessCache } from '@/hooks/useOrganizationAccess';
 
 const OrganizationSetup = () => {
   const navigate = useNavigate();
@@ -46,6 +47,7 @@ const OrganizationSetup = () => {
 
       if (error) throw error;
 
+      invalidateOrganizationAccessCache();
       toast({
         title: 'Organization created',
         description: `${orgName.trim()} is ready. Redirecting to your CRM.`,

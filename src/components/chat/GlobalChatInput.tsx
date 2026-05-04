@@ -62,7 +62,7 @@ export const GlobalChatInput = forwardRef<HTMLInputElement, GlobalChatInputProps
   const { activeViewRole } = useActiveViewRoleStore();
   const { currentOrganization } = useOrganizationAccess();
   const assignedSalesRole = (currentOrganization?.sales_role || 'ae') as import('@/stores/activeViewRoleStore').SalesRole;
-  const isOrgAdmin = currentOrganization?.role === 'admin';
+  const isOrgAdmin = currentOrganization?.role === 'owner' || currentOrganization?.role === 'admin';
   const allowedViews = ROLE_MENU_MAP[activeViewRole] || ROLE_MENU_MAP.ae;
   const showAdminSection = isOrgAdmin || assignedSalesRole === 'revops';
   const inputRef = React.useRef<HTMLInputElement>(null);

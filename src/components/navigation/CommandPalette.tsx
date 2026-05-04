@@ -69,7 +69,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ setCurrentView }
   const { currentOrganization } = useOrganizationAccess();
   const { activeViewRole } = useActiveViewRoleStore();
   const { openContactDialog, openDealDialog, openAccountDialog } = useDialogStore();
-  const isAdmin = currentOrganization?.role === 'admin';
+  const isAdmin = currentOrganization?.role === 'owner' || currentOrganization?.role === 'admin';
   const showAdminSection = isAdmin || currentOrganization?.sales_role === 'revops';
   const allowedItems = getAccessibleViews(activeViewRole, currentOrganization?.role);
 

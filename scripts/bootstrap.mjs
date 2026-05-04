@@ -96,8 +96,10 @@ async function configureRequiredEnv(prompter, envFile, flags, env) {
   const url = await prompter.required('Hosted Supabase URL', flags.supabaseUrl || env.VITE_SUPABASE_URL || '');
   const anon = await prompter.required('Supabase anon key', flags.anonKey || env.VITE_SUPABASE_ANON_KEY || '', { secret: true });
   const srk = await prompter.required('Supabase service role key', flags.serviceRoleKey || env.SUPABASE_SERVICE_ROLE_KEY || '', { secret: true });
-  const dbUrl = await prompter.required('Supabase database URL (session pooler recommended)', flags.dbUrl || env.SUPABASE_DB_URL || '', { secret: true });
-  const poolerUrl = await prompter.optional('Optional session pooler DB URL for IPv4 fallback', flags.poolerDbUrl || env.SUPABASE_POOLER_DB_URL || '', { secret: true });
+  const dbUrlDefault = flags.dbUrl || env.SUPABASE_DB_URL || env.SUPABASE_POOLER_DB_URL || '';
+  const poolerUrlDefault = flags.poolerDbUrl || env.SUPABASE_POOLER_DB_URL || '';
+  const dbUrl = await prompter.required('Supabase database URL (session pooler recommended)', dbUrlDefault, { secret: true });
+  const poolerUrl = await prompter.optional('Optional session pooler DB URL for IPv4 fallback', poolerUrlDefault, { secret: true });
   const projRef = await prompter.required('Supabase project ref', flags.projectRef || env.SUPABASE_PROJECT_REF || '');
 
   upsertEnvVar(envFile, 'VITE_SUPABASE_URL', url);

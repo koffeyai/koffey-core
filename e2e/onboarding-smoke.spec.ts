@@ -156,6 +156,32 @@ test('preserves organization intent when signup requires email confirmation', as
   });
 });
 
+test('does not save personal email domains as organization domains', async ({ page }) => {
+  await mockProfileLookupAsNoUser(page);
+  await mockHandleAuth(page);
+  await mockSignupWithoutSession(page);
+
+  await page.goto('/signup');
+
+  await page.getByLabel('First Name').fill('Founder');
+  await page.getByLabel('Last Name').fill('Example');
+  await page.getByLabel('Email').fill('founder@gmail.com');
+  await page.locator('#password').fill('Password123');
+  await page.getByRole('button', { name: 'Create account' }).click();
+
+  await expect(page.getByRole('heading', { name: 'Create Your Organization' })).toBeVisible();
+  await expect(page.getByLabel('Company domain or website')).toHaveValue('');
+  await page.getByLabel('Organization Name').fill('Personal Workspace');
+  await page.getByRole('button', { name: 'Create Organization' }).click();
+  await expect(page.getByRole('heading', { name: 'Check your email' })).toBeVisible();
+
+  const pendingOrg = await page.evaluate(() => window.localStorage.getItem('koffey_pending_org_setup'));
+  expect(pendingOrg).not.toBeNull();
+  expect(JSON.parse(pendingOrg || '{}')).toEqual({
+    orgName: 'Personal Workspace',
+  });
+});
+
 test('lets an authenticated user finish organization setup and continue to onboarding', async ({ page }) => {
   let createOrgRequestBody: Record<string, unknown> | null = null;
   let createOrgAuthorization: string | null = null;

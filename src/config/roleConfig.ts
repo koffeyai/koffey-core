@@ -58,15 +58,15 @@ const ROLE_LEVEL: Record<SalesRole, number> = {
 };
 
 /** Returns true if a user with `assignedRole` is allowed to switch to `targetRole`.
- *  `orgRole` is the organization permission level (admin/manager/member) — org admins bypass the hierarchy. */
+ *  `orgRole` is the organization permission level; org owners/admins bypass the hierarchy. */
 export function canSwitchToRole(assignedRole: SalesRole, targetRole: SalesRole, orgRole?: string | null): boolean {
   // Org-level admins always have full access regardless of sales_role
-  if (orgRole === 'admin') return true;
+  if (orgRole === 'owner' || orgRole === 'admin') return true;
   return ROLE_LEVEL[targetRole] <= ROLE_LEVEL[assignedRole];
 }
 
 export function getAccessibleViews(activeRole: SalesRole, orgRole?: string | null): string[] {
-  if (orgRole === 'admin') {
+  if (orgRole === 'owner' || orgRole === 'admin') {
     return Array.from(new Set([
       ...ALWAYS_ALLOWED_VIEWS,
       ...Object.values(ROLE_MENU_MAP).flat(),

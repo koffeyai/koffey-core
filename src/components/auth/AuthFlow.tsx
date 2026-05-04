@@ -10,6 +10,7 @@ import { Coffee, Building, Users, CheckCircle, AlertCircle, ArrowLeft } from 'lu
 import PasswordInput from '@/components/auth/PasswordInput';
 import { logger } from '@/lib/logger';
 import { clearPendingOrgSetup, savePendingOrgSetup } from '@/lib/pendingOrgSetup';
+import { invalidateOrganizationAccessCache } from '@/hooks/useOrganizationAccess';
 
 
 interface AuthData {
@@ -28,14 +29,40 @@ interface OrgSetupFormProps {
   loading: boolean;
 }
 
+const PERSONAL_EMAIL_DOMAINS = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'outlook.com',
+  'hotmail.com',
+  'live.com',
+  'msn.com',
+  'yahoo.com',
+  'icloud.com',
+  'me.com',
+  'mac.com',
+  'aol.com',
+  'proton.me',
+  'protonmail.com',
+  'pm.me',
+  'hey.com',
+  'zoho.com',
+  'fastmail.com',
+]);
+
+function inferOrganizationDomain(email: string): string {
+  const domain = email.split('@')[1]?.trim().toLowerCase() || '';
+  return domain && !PERSONAL_EMAIL_DOMAINS.has(domain) ? domain : '';
+}
+
 function OrgSetupForm({ onSubmit, userEmail, loading }: OrgSetupFormProps) {
   const [orgName, setOrgName] = useState('')
-  const domain = userEmail.split('@')[1]
+  const [orgDomain, setOrgDomain] = useState(() => inferOrganizationDomain(userEmail))
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (orgName.trim()) {
-      onSubmit({ name: orgName.trim(), domain })
+      const domain = orgDomain.trim()
+      onSubmit({ name: orgName.trim(), ...(domain ? { domain } : {}) })
     }
   }
 
@@ -53,12 +80,18 @@ function OrgSetupForm({ onSubmit, userEmail, loading }: OrgSetupFormProps) {
         />
       </div>
       <div className="space-y-2">
-        <Label>Domain</Label>
+        <Label htmlFor="orgDomain">Company domain or website</Label>
         <Input
-          value={domain}
-          disabled
-          className="bg-gray-100"
+          id="orgDomain"
+          value={orgDomain}
+          onChange={(e) => setOrgDomain(e.target.value)}
+          placeholder="acme.com (optional)"
+          autoComplete="url"
+          disabled={loading}
         />
+        <p className="text-xs text-muted-foreground">
+          Leave this blank for personal email domains or unverified workspaces.
+        </p>
       </div>
       <Button 
         type="submit" 
@@ -304,7 +337,7 @@ export function AuthFlow() {
           body: {
             userId: data.user.id,
             orgName: orgData.name,
-            domain: orgData.domain || email.split('@')[1]
+            ...(orgData.domain ? { domain: orgData.domain } : {}),
           }
         });
 
@@ -318,6 +351,7 @@ export function AuthFlow() {
         }
 
         clearPendingOrgSetup();
+        invalidateOrganizationAccessCache();
         setStep('success');
         toast({
           title: "Welcome to Koffey!",

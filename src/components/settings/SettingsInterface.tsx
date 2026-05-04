@@ -256,7 +256,7 @@ export const SettingsInterface: React.FC<SettingsInterfaceProps> = ({ onBackToCh
                               </div>
                             </div>
                             <div className="flex items-center space-x-2">
-                              {membership.role === 'admin' && (
+                              {(membership.role === 'owner' || membership.role === 'admin') && (
                                 <Crown className="h-4 w-4 text-yellow-600" />
                               )}
                               {currentOrganization?.organization_id === membership.organization_id ? (

@@ -8,6 +8,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/components/auth/AuthProvider';
 import { useToast } from '@/hooks/use-toast';
 import { clearPendingOrgSetup } from '@/lib/pendingOrgSetup';
+import { invalidateOrganizationAccessCache } from '@/hooks/useOrganizationAccess';
 
 interface OrganizationOnboardingProps {
   onComplete: () => void;
@@ -30,7 +31,6 @@ export const OrganizationOnboarding: React.FC<OrganizationOnboardingProps> = ({ 
         body: {
           userId: user.id,
           orgName: orgName.trim(),
-          domain: user.email?.split('@')[1] || '',
         },
       });
 
@@ -48,6 +48,7 @@ export const OrganizationOnboarding: React.FC<OrganizationOnboardingProps> = ({ 
         description: `${orgName.trim()} is ready to go.`,
       });
       clearPendingOrgSetup();
+      invalidateOrganizationAccessCache();
       onComplete();
     } catch (error: any) {
       toast({

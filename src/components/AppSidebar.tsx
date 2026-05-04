@@ -45,7 +45,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   currentView = 'chat'
 }) => {
   const { currentOrganization } = useOrganizationAccess();
-  const isAdmin = currentOrganization?.role === 'admin';
+  const isAdmin = currentOrganization?.role === 'owner' || currentOrganization?.role === 'admin';
   const showAdminSection = isAdmin || currentOrganization?.sales_role === 'revops';
   const { activeViewRole, isOverride } = useActiveViewRoleStore();
   const allowedItems = getAccessibleViews(activeViewRole, currentOrganization?.role);

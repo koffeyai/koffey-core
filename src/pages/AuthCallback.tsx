@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { logger } from '@/lib/logger';
 import { loadPendingOrgSetup, clearPendingOrgSetup } from '@/lib/pendingOrgSetup';
+import { invalidateOrganizationAccessCache } from '@/hooks/useOrganizationAccess';
 
 const AuthCallback = () => {
   const navigate = useNavigate();
@@ -65,13 +66,14 @@ const AuthCallback = () => {
                 body: {
                   userId: session.user.id,
                   orgName: pendingOrg.orgName,
-                  domain: pendingOrg.domain || session.user.email?.split('@')[1] || '',
+                  ...(pendingOrg.domain ? { domain: pendingOrg.domain } : {}),
                 },
               });
               if (orgError) {
                 logger.error('Failed to create pending org after email confirmation', { error: orgError });
               } else {
                 logger.info('Created pending org after email confirmation', { orgName: pendingOrg.orgName });
+                invalidateOrganizationAccessCache();
               }
             } catch (err) {
               logger.error('Exception creating pending org after email confirmation', { error: err });

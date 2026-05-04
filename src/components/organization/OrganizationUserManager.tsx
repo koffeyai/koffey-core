@@ -317,7 +317,7 @@ export const OrganizationUserManager: React.FC = () => {
   const totalUsers = members.length;
   const activeUsers = members.filter(m => m.is_active).length;
   const pendingUsers = members.filter(m => !m.profiles?.full_name).length;
-  const adminUsers = members.filter(m => m.role === 'admin').length;
+  const adminUsers = members.filter(m => m.role === 'owner' || m.role === 'admin').length;
 
   if (loading) {
     return (

@@ -16,7 +16,7 @@ interface OrganizationMembership {
   id: string;
   organization_id: string;
   user_id: string;
-  role: 'admin' | 'manager' | 'member';
+  role: 'owner' | 'admin' | 'manager' | 'member';
   is_active: boolean;
   organization: Organization;
 }
@@ -245,7 +245,7 @@ export const useOrganizationStore = create<OrganizationState>()(
               return;
             }
 
-            const isAdmin = membership.role === 'admin';
+            const isAdmin = membership.role === 'owner' || membership.role === 'admin';
             const isManager = membership.role === 'manager' || isAdmin;
 
             set({

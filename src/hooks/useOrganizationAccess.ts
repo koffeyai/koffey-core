@@ -15,7 +15,7 @@ export interface OrganizationMembership {
   id: string;
   organization_id: string;
   user_id: string;
-  role: 'admin' | 'manager' | 'member';
+  role: 'owner' | 'admin' | 'manager' | 'member';
   is_active: boolean;
   joined_at: string;
   organization: Organization;
@@ -34,7 +34,7 @@ export interface UseOrganizationAccessReturn {
   // Convenience accessors
   organizationId: string | null;
   organizationName: string | null;
-  userRole: 'admin' | 'manager' | 'member' | null;
+  userRole: 'owner' | 'admin' | 'manager' | 'member' | null;
   salesRole: SalesRole;
   salesRoleStatus: 'pending' | 'approved';
   isAdmin: boolean;
@@ -69,6 +69,11 @@ let _cachedResult: {
   fetchedAt: number;
 } | null = null;
 const CACHE_DURATION = 30000; // 30 seconds
+
+export function invalidateOrganizationAccessCache(): void {
+  _cachedResult = null;
+  _fetchPromise = null;
+}
 
 async function fetchMembershipsShared(
   userId: string,
@@ -121,7 +126,7 @@ async function fetchMembershipsShared(
           id: m.id,
           organization_id: m.organization_id,
           user_id: m.user_id,
-          role: m.role as 'admin' | 'manager' | 'member',
+          role: m.role as 'owner' | 'admin' | 'manager' | 'member',
           is_active: m.is_active,
           joined_at: m.joined_at || new Date().toISOString(),
           organization: {
@@ -264,7 +269,7 @@ export const useOrganizationAccess = (): UseOrganizationAccessReturn => {
   const userRole = currentOrganization?.role ?? null;
   const salesRole: SalesRole = currentOrganization?.sales_role ?? 'ae';
   const salesRoleStatus = currentOrganization?.sales_role_status ?? 'approved';
-  const isAdmin = userRole === 'admin';
+  const isAdmin = userRole === 'owner' || userRole === 'admin';
   const isManager = userRole === 'manager' || isAdmin;
   const hasOrganization = !!currentOrganization;
   const hasMultipleOrganizations = memberships.length > 1;
