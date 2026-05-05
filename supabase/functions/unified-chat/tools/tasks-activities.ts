@@ -129,6 +129,15 @@ export async function executeCreateTask(
       contact = resolved.contact;
     }
   }
+  if (!contact && deal.contact_id) {
+    const resolved = await resolveContactByIdOrName(supabase, organizationId, {
+      contactId: deal.contact_id,
+      accountId: deal.account_id || null,
+    });
+    if (!resolved.multiple && resolved.contact) {
+      contact = resolved.contact;
+    }
+  }
 
   const payload: Record<string, any> = {
     title: String(title).trim(),

@@ -52,6 +52,9 @@ import {
 import {
   buildDeterministicPendingUpdateAccountRenamePlan,
   buildDeterministicUpdateAccountRenamePlan,
+  buildDeterministicPendingUpdateDealPlan,
+  buildDeterministicPendingUpdateDealPlanFromData,
+  buildDeterministicUpdateDealPlan,
   buildDeterministicCreateAccountThenDealPlan,
   buildDeterministicCreateDealPlan,
   buildDeterministicCreateTaskPlan,
@@ -67,6 +70,7 @@ import {
   hasDeterministicMutationCue,
   inferPendingDealDataFromHistory,
   inferPendingDeleteDealFromHistory,
+  inferPendingUpdateDealFromHistory,
   inferPendingDraftEmailFromHistory,
   repairScheduleMeetingArgsFromMessage,
 } from './intent/deterministic-mutation-planner.mjs';
@@ -155,6 +159,7 @@ const WRITE_ROLES = new Set(['owner', 'admin', 'member']);
 const ADMIN_WRITE_ROLES = new Set(['owner', 'admin']);
 const PENDING_DRAFT_EMAIL_MAX_AGE_MS = 30 * 60 * 1000;
 const PENDING_SCHEDULE_MEETING_MAX_AGE_MS = 30 * 60 * 1000;
+const PENDING_DEAL_UPDATE_MAX_AGE_MS = 30 * 60 * 1000;
 
 function normalizeOrgRole(role: unknown): string {
   return String(role || '').trim().toLowerCase();
@@ -192,6 +197,25 @@ function isFreshPendingDraftEmail(value: any, createdAt: unknown): boolean {
   const timestamp = createdAt ? Date.parse(String(createdAt)) : NaN;
   if (!Number.isFinite(timestamp)) return false;
   return Date.now() - timestamp <= PENDING_DRAFT_EMAIL_MAX_AGE_MS;
+}
+
+function normalizePendingDealUpdate(value: any): any | null {
+  const pending = value?.pending_update || value;
+  if (!pending || typeof pending !== 'object' || Array.isArray(pending)) return null;
+  if (!pending.updates || typeof pending.updates !== 'object' || Array.isArray(pending.updates)) return null;
+  if (Object.keys(pending.updates).length === 0) return null;
+  if (!pending.deal_id && !pending.deal_name) return null;
+  return {
+    ...pending,
+    updates: pending.updates,
+  };
+}
+
+function isFreshPendingDealUpdate(value: any, createdAt: unknown): boolean {
+  if (!normalizePendingDealUpdate(value)) return false;
+  const timestamp = createdAt ? Date.parse(String(createdAt)) : NaN;
+  if (!Number.isFinite(timestamp)) return false;
+  return Date.now() - timestamp <= PENDING_DEAL_UPDATE_MAX_AGE_MS;
 }
 
 function normalizePendingScheduleMeeting(value: any): any | null {
@@ -265,6 +289,42 @@ async function clearPendingDraftEmail(
 
   if (error) {
     console.warn(`[unified-chat] Failed to clear pending_draft_email: ${error.message}`);
+  }
+}
+
+async function storePendingDealUpdate(
+  supabase: any,
+  sessionId: string | undefined,
+  sessionTable: 'chat_sessions' | 'messaging_sessions',
+  pendingUpdate: any,
+) {
+  if (!sessionId) return;
+  const normalized = normalizePendingDealUpdate(pendingUpdate);
+  if (!normalized) return;
+  const { error } = await supabase
+    .from(sessionTable)
+    .update({
+      pending_deal_update: normalized,
+      pending_deal_update_at: new Date().toISOString(),
+    })
+    .eq('id', sessionId);
+  if (error) {
+    console.warn(`[unified-chat] Failed to store pending_deal_update: ${error.message}`);
+  }
+}
+
+async function clearPendingDealUpdate(
+  supabase: any,
+  sessionId: string | undefined,
+  sessionTable: 'chat_sessions' | 'messaging_sessions',
+) {
+  if (!sessionId) return;
+  const { error } = await supabase
+    .from(sessionTable)
+    .update({ pending_deal_update: null, pending_deal_update_at: null })
+    .eq('id', sessionId);
+  if (error) {
+    console.warn(`[unified-chat] Failed to clear pending_deal_update: ${error.message}`);
   }
 }
 
@@ -572,11 +632,12 @@ const handler = async (req: Request): Promise<Response> => {
     let pendingDealData: any = null;
     let pendingSequenceActionData: any = null;
     let pendingDraftEmailData: any = null;
+    let pendingDealUpdateData: any = null;
     let pendingScheduleMeetingData: any = null;
     if (sessionId) {
       const { data: pendingCheck } = await admin
         .from(sessionTable)
-        .select('pending_deal_creation, pending_extraction, pending_sequence_action, pending_draft_email, pending_draft_email_at, pending_schedule_meeting, pending_schedule_meeting_at')
+        .select('pending_deal_creation, pending_extraction, pending_sequence_action, pending_draft_email, pending_draft_email_at, pending_deal_update, pending_deal_update_at, pending_schedule_meeting, pending_schedule_meeting_at')
         .eq('id', sessionId)
         .maybeSingle();
       hasPendingDealCreation = !!pendingCheck?.pending_deal_creation;
@@ -590,6 +651,9 @@ const handler = async (req: Request): Promise<Response> => {
       }
       if (isFreshPendingDraftEmail(pendingCheck?.pending_draft_email, pendingCheck?.pending_draft_email_at)) {
         pendingDraftEmailData = pendingCheck.pending_draft_email;
+      }
+      if (isFreshPendingDealUpdate(pendingCheck?.pending_deal_update, pendingCheck?.pending_deal_update_at)) {
+        pendingDealUpdateData = pendingCheck.pending_deal_update;
       }
       if (isFreshPendingScheduleMeeting(pendingCheck?.pending_schedule_meeting, pendingCheck?.pending_schedule_meeting_at)) {
         pendingScheduleMeetingData = pendingCheck.pending_schedule_meeting;
@@ -706,13 +770,16 @@ const handler = async (req: Request): Promise<Response> => {
       ? inferPendingDealDataFromHistory(normalizedHistory)
       : null;
     const historyPendingDeleteDealData = inferPendingDeleteDealFromHistory(normalizedHistory);
+    const historyPendingUpdateDealData = inferPendingUpdateDealFromHistory(normalizedHistory);
+    const effectivePendingUpdateDealData = normalizePendingDealUpdate(pendingDealUpdateData) || historyPendingUpdateDealData;
     const historyPendingDraftEmailData = inferPendingDraftEmailFromHistory(normalizedHistory);
     const effectivePendingDealData = hasPendingDealCreation ? pendingDealData : historyPendingDealData;
     const hasPendingDealContext = hasPendingDealCreation || !!historyPendingDealData;
     const hasPendingDeleteDealContext = !!historyPendingDeleteDealData;
+    const hasPendingUpdateDealContext = !!effectivePendingUpdateDealData;
     const hasPendingDraftEmailContext = !!historyPendingDraftEmailData;
     const hasPendingScheduleMeetingContext = !!effectivePendingScheduleMeeting;
-    const hasPendingMutationContext = hasPendingDealContext || hasPendingSequenceAction || hasPendingDeleteDealContext || hasPendingDraftEmailContext || hasPendingScheduleMeetingContext;
+    const hasPendingMutationContext = hasPendingDealContext || hasPendingSequenceAction || hasPendingDeleteDealContext || hasPendingUpdateDealContext || hasPendingDraftEmailContext || hasPendingScheduleMeetingContext;
     const provisionalRoutingPolicy = determineRoutingPolicy({
       message,
       historyText,
@@ -792,6 +859,12 @@ const handler = async (req: Request): Promise<Response> => {
     if (hasPendingDeleteDealContext && !domainFilter) {
       domainFilter = ['update', 'search'];
     }
+    if (hasPendingUpdateDealContext && domainFilter && !domainFilter.includes('update')) {
+      domainFilter = [...domainFilter, 'update', 'search'];
+    }
+    if (hasPendingUpdateDealContext && !domainFilter) {
+      domainFilter = ['update', 'search'];
+    }
     if (hasPendingDraftEmailContext && domainFilter && !domainFilter.includes('intelligence')) {
       domainFilter = [...domainFilter, 'intelligence', 'email', 'search'];
     }
@@ -833,7 +906,8 @@ const handler = async (req: Request): Promise<Response> => {
       shadowIntent: comparisonIntent?.intent || null,
     });
 
-    const shouldReturnClarification = !hasPendingMutationContext
+    const shouldReturnClarification = !deterministicMutationOverride
+      && !hasPendingMutationContext
       && clarification.needsClarification
       && Number(authoritativeIntent?.confidence || 0) >= 0.72;
 
@@ -1903,6 +1977,13 @@ const handler = async (req: Request): Promise<Response> => {
     const deterministicPendingUpdateAccountRenamePlan = !shouldDeferDeterministicMutationFallback
       ? buildDeterministicPendingUpdateAccountRenamePlan(message, normalizedHistory, allowedToolNames)
       : null;
+    const deterministicPendingUpdateDealPlan = !shouldDeferDeterministicMutationFallback
+      ? (
+        effectivePendingUpdateDealData
+          ? buildDeterministicPendingUpdateDealPlanFromData(message, effectivePendingUpdateDealData, allowedToolNames)
+          : buildDeterministicPendingUpdateDealPlan(message, normalizedHistory, allowedToolNames)
+      )
+      : null;
     const deterministicPendingDeleteDealPlan = !shouldDeferDeterministicMutationFallback
       ? buildDeterministicPendingDeleteDealPlan(message, normalizedHistory, allowedToolNames)
       : null;
@@ -1917,7 +1998,7 @@ const handler = async (req: Request): Promise<Response> => {
     const liveForcedToolPlan = !shouldBypassPipelineRetrievalForMutation && shouldUseLiveForcedRetrievalPlan({
       shouldHonorRetrievalPlan,
       retrievalPlan: authoritativeRetrievalPlan,
-      deterministicPendingDealPlanAvailable: !!deterministicPendingDealPlan || !!deterministicPendingSequencePlan || !!deterministicPendingDeleteDealPlan || !!deterministicPendingDraftEmailPlan || !!deterministicPendingScheduleMeetingPlan,
+      deterministicPendingDealPlanAvailable: !!deterministicPendingDealPlan || !!deterministicPendingSequencePlan || !!deterministicPendingUpdateDealPlan || !!deterministicPendingDeleteDealPlan || !!deterministicPendingDraftEmailPlan || !!deterministicPendingScheduleMeetingPlan,
     });
     if (deterministicCompoundCreateToolCalls) {
       llm = {
@@ -2012,6 +2093,22 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     if (!routerUsedForToolPlan && !deterministicMutationToolPlanUsed && !shouldDeferDeterministicMutationFallback) {
+      if (deterministicPendingUpdateDealPlan) {
+        llm = {
+          ...deterministicPendingUpdateDealPlan,
+          routingDecision: routing,
+        } as Awaited<ReturnType<typeof callWithFallback>>;
+        deterministicMutationToolPlanUsed = true;
+        meta.deterministicMutationPlan = 'resume_update_deal';
+        meta.execution = {
+          ...(meta.execution || {}),
+          toolPlannerInvoked: true,
+          deterministicPathUsed: true,
+        };
+      }
+    }
+
+    if (!routerUsedForToolPlan && !deterministicMutationToolPlanUsed && !shouldDeferDeterministicMutationFallback) {
       if (deterministicPendingDeleteDealPlan) {
         llm = {
           ...deterministicPendingDeleteDealPlan,
@@ -2076,6 +2173,27 @@ const handler = async (req: Request): Promise<Response> => {
         } as Awaited<ReturnType<typeof callWithFallback>>;
         deterministicMutationToolPlanUsed = true;
         meta.deterministicMutationPlan = 'update_account_rename';
+        meta.execution = {
+          ...(meta.execution || {}),
+          toolPlannerInvoked: true,
+          deterministicPathUsed: true,
+        };
+      }
+    }
+
+    if (!routerUsedForToolPlan && !deterministicMutationToolPlanUsed && !shouldDeferDeterministicMutationFallback) {
+      const deterministicUpdateDealPlan = buildDeterministicUpdateDealPlan(
+        message,
+        authoritativeIntent,
+        allowedToolNames,
+      );
+      if (deterministicUpdateDealPlan) {
+        llm = {
+          ...deterministicUpdateDealPlan,
+          routingDecision: routing,
+        } as Awaited<ReturnType<typeof callWithFallback>>;
+        deterministicMutationToolPlanUsed = true;
+        meta.deterministicMutationPlan = 'update_deal';
         meta.execution = {
           ...(meta.execution || {}),
           toolPlannerInvoked: true,
@@ -2457,6 +2575,13 @@ const handler = async (req: Request): Promise<Response> => {
           crmOperations.push({ tool: toolName, args, result });
           if (MUTATION_TOOLS.has(toolName) && !result?.error) mutationApplied = true;
           if (result?.action) action = result.action;
+          if (toolName === 'update_deal') {
+            if (result?._needsConfirmation && result?._confirmationType === 'update_deal_conflict') {
+              await storePendingDealUpdate(admin, validation.sanitizedData.sessionId, sessionTable, result.pending_update || result);
+            } else if (!result?.error && !result?._needsConfirmation) {
+              await clearPendingDealUpdate(admin, validation.sanitizedData.sessionId, sessionTable);
+            }
+          }
           if (result?.schedulingSlots) {
             meta.schedulingSlots = result.schedulingSlots;
           }

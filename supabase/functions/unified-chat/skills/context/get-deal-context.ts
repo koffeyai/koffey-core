@@ -42,6 +42,10 @@ function stripArticles(name: string): string {
   return name.replace(/^(the|a|an)\s+/i, '').trim();
 }
 
+function isUuid(value?: string | null): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '').trim());
+}
+
 /** Strip trailing entity-type words ("deal", "deals", "opportunity", "account", "contact") */
 function stripEntitySuffix(name: string): string {
   return name.replace(/\s+(?:deal|deals|opportunity|opportunities|account|accounts|contact|contacts)$/i, '').trim() || name;
@@ -272,32 +276,39 @@ const getDealContext: SkillDefinition = {
 
     // ----- 1. Resolve deal_id from args / entityContext / activeContext -----
 
-    let dealId = args.deal_id;
+    let dealName = args.deal_name;
+    let dealId = isUuid(args.deal_id) ? args.deal_id : undefined;
+    if (args.deal_id && !dealId && !dealName) {
+      dealName = args.deal_id;
+    }
 
     // Try entity context when we have a name hint but no id
-    if (!dealId && args.deal_name && ctx.entityContext) {
-      dealId = resolveEntityFromContext(ctx.entityContext, 'deal', args.deal_name) ?? undefined;
+    if (!dealId && dealName && ctx.entityContext) {
+      const resolvedId = resolveEntityFromContext(ctx.entityContext, 'deal', dealName);
+      if (isUuid(resolvedId)) dealId = resolvedId ?? undefined;
     }
 
     // Try entity context without a name hint (primary entity)
-    if (!dealId && !args.deal_name && ctx.entityContext) {
-      dealId = resolveEntityFromContext(ctx.entityContext, 'deal') ?? undefined;
+    if (!dealId && !dealName && ctx.entityContext) {
+      const resolvedId = resolveEntityFromContext(ctx.entityContext, 'deal');
+      if (isUuid(resolvedId)) dealId = resolvedId ?? undefined;
     }
 
     // Fall back to activeContext (most recently discussed deal)
     if (
       !dealId &&
-      !args.deal_name &&
+      !dealName &&
       ctx.activeContext?.lastEntityType === 'deals' &&
       ctx.activeContext.lastEntityIds?.length === 1
     ) {
-      dealId = ctx.activeContext.lastEntityIds[0];
+      const activeId = ctx.activeContext.lastEntityIds[0];
+      if (isUuid(activeId)) dealId = activeId;
     }
 
     // ----- 2. If still no id but we have a name, search deals table -----
 
-    if (!dealId && args.deal_name) {
-      const cleanedName = cleanEntityDisplayName(args.deal_name);
+    if (!dealId && dealName) {
+      const cleanedName = cleanEntityDisplayName(dealName);
       const noArticle = stripArticles(cleanedName);
       const noSuffix = stripEntitySuffix(noArticle);
 

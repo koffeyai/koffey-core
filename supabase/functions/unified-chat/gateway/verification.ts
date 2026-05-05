@@ -407,6 +407,8 @@ export function verifyResponseAgainstToolResults(
     // Context RPCs return nested objects (get_deal_context, get_contact_context)
     if (r.__trusted_context) return true;
     if (r.deal?.id || r.account?.id || r.contact?.id) return true;
+    if (r.deal_id || r.account_id || r.contact_id || r.task_id) return true;
+    if (r.pending_update?.deal_id || r.pending_delete?.deal_id) return true;
     return false;
   });
 

@@ -33,6 +33,9 @@ class FakeQuery {
     if (this.table === 'deals' && this.filters.id === this.state.deal.id) {
       return Promise.resolve({ data: this.state.deal, error: null });
     }
+    if (this.table === 'contacts' && this.filters.id === this.state.contact.id) {
+      return Promise.resolve({ data: this.state.contact, error: null });
+    }
     return Promise.resolve({ data: null, error: null });
   }
   single() {
@@ -66,7 +69,13 @@ function createFakeSupabase() {
       id: 'deal-1',
       name: 'Example Labs - $35K',
       account_id: 'account-1',
+      contact_id: 'contact-1',
       accounts: { name: 'Example Labs' },
+    },
+    contact: {
+      id: 'contact-1',
+      full_name: 'Casey Cycle',
+      account_id: 'account-1',
     },
   };
 
@@ -100,4 +109,25 @@ test('executeCreateTask prefers explicit UI deal context over extracted account 
   assert.equal(result.deal_id, 'deal-1');
   assert.equal(supabase.state.insertedTask.deal_id, 'deal-1');
   assert.equal(supabase.state.tables.includes('accounts'), false);
+});
+
+test('executeCreateTask falls back to the deal primary contact when no task contact resolves', async () => {
+  const supabase = createFakeSupabase();
+
+  const result = await executeCreateTask(
+    supabase,
+    {
+      title: 'Follow up with Casey Cycle',
+      deal_name: 'Example Labs',
+      due_date: '2026-05-12',
+      priority: 'high',
+    },
+    'org-1',
+    'user-1',
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.contact_id, 'contact-1');
+  assert.equal(supabase.state.insertedTask.contact_id, 'contact-1');
+  assert.equal(supabase.state.insertedTask.priority, 'high');
 });

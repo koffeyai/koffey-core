@@ -106,6 +106,45 @@ function formatDateStr(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
+function getTimeZoneOffsetMs(date: Date, timezone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(date);
+
+  const values = Object.fromEntries(
+    parts
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, part.value])
+  );
+
+  const zonedAsUtc = Date.UTC(
+    Number(values.year),
+    Number(values.month) - 1,
+    Number(values.day),
+    Number(values.hour),
+    Number(values.minute),
+    Number(values.second)
+  );
+
+  return zonedAsUtc - date.getTime();
+}
+
+function makeZonedDate(dateStr: string, hour: number, minute: number, timezone: string): Date {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const utcGuess = new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
+  const firstOffset = getTimeZoneOffsetMs(utcGuess, timezone);
+  const firstPass = new Date(utcGuess.getTime() - firstOffset);
+  const finalOffset = getTimeZoneOffsetMs(firstPass, timezone);
+  return new Date(utcGuess.getTime() - finalOffset);
+}
+
 /**
  * Given a day and a time window, find available slots that don't overlap with busy periods.
  * Returns slots aligned to 30-minute boundaries.
@@ -119,19 +158,16 @@ function findSlotsForDay(
 ): AvailableSlot[] {
   const slots: AvailableSlot[] = [];
   const dateStr = formatDateStr(day);
-
-  // Build the search window for this day in the user's timezone
-  // We work in UTC but define the window relative to the user's local time
-  const windowStartStr = `${dateStr}T${String(window.startHour).padStart(2, '0')}:${String(window.startMinute).padStart(2, '0')}:00`;
-  const windowEndStr = `${dateStr}T${String(window.endHour).padStart(2, '0')}:${String(window.endMinute).padStart(2, '0')}:00`;
+  const windowStartDate = makeZonedDate(dateStr, window.startHour, window.startMinute, timezone);
+  const windowEndDate = makeZonedDate(dateStr, window.endHour, window.endMinute, timezone);
 
   // Parse busy periods that overlap with this day
   const dayBusy = busyPeriods
     .map(b => ({ start: new Date(b.start).getTime(), end: new Date(b.end).getTime() }))
     .filter(b => {
       // Rough filter: busy period overlaps this day
-      const dayStart = new Date(windowStartStr + 'Z').getTime() - 24 * 60 * 60 * 1000; // generous
-      const dayEnd = new Date(windowEndStr + 'Z').getTime() + 24 * 60 * 60 * 1000;
+      const dayStart = windowStartDate.getTime() - 24 * 60 * 60 * 1000; // generous
+      const dayEnd = windowEndDate.getTime() + 24 * 60 * 60 * 1000;
       return b.start < dayEnd && b.end > dayStart;
     })
     .sort((a, b) => a.start - b.start);
@@ -144,16 +180,10 @@ function findSlotsForDay(
   let candidateMinute = window.startMinute;
 
   while (candidateHour < window.endHour || (candidateHour === window.endHour && candidateMinute < window.endMinute)) {
-    const slotStartStr = `${dateStr}T${String(candidateHour).padStart(2, '0')}:${String(candidateMinute).padStart(2, '0')}:00`;
-
-    // Use a simple approach: create Date objects with timezone offset
-    // The FreeBusy API returns UTC times, so we need to compare properly
-    // We'll use the timezone-aware format for the Google API
-    const slotStartDate = new Date(slotStartStr);
+    const slotStartDate = makeZonedDate(dateStr, candidateHour, candidateMinute, timezone);
     const slotEndDate = new Date(slotStartDate.getTime() + durationMs);
 
     // Check the end of this slot doesn't exceed the window
-    const windowEndDate = new Date(windowEndStr);
     if (slotEndDate > windowEndDate) break;
 
     // Skip slots in the past
@@ -330,8 +360,18 @@ try {
     const firstDay = businessDays[0];
     const lastDay = businessDays[businessDays.length - 1];
 
-    const timeMinStr = `${formatDateStr(firstDay)}T${String(window.startHour).padStart(2, '0')}:00:00`;
-    const timeMaxStr = `${formatDateStr(new Date(lastDay.getTime() + 24 * 60 * 60 * 1000))}T00:00:00`;
+    const timeMinStr = makeZonedDate(
+      formatDateStr(firstDay),
+      window.startHour,
+      window.startMinute,
+      timezone
+    ).toISOString();
+    const timeMaxStr = makeZonedDate(
+      formatDateStr(new Date(lastDay.getTime() + 24 * 60 * 60 * 1000)),
+      0,
+      0,
+      timezone
+    ).toISOString();
 
     // Call Google Calendar FreeBusy API
     const freeBusyRes = await fetch('https://www.googleapis.com/calendar/v3/freeBusy', {

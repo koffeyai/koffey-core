@@ -4,6 +4,12 @@
 
 import { supabase } from '@/integrations/supabase/client';
 
+const AUDIT_OPERATION_VALUES = {
+  create: 'INSERT',
+  update: 'UPDATE',
+  delete: 'DELETE',
+} as const;
+
 export interface AuditEntry {
   id: string;
   table_name: string;
@@ -76,7 +82,7 @@ export class AuditService {
         record_id: recordId,
         organization_id: organizationId,
         user_id: userId,
-        operation,
+        operation: AUDIT_OPERATION_VALUES[operation],
         old_values: oldValues,
         new_values: newValues,
         changes,
@@ -113,7 +119,7 @@ export class AuditService {
         record_id: recordId,
         organization_id: organizationId,
         user_id: userId,
-        operation,
+        operation: AUDIT_OPERATION_VALUES[operation],
         old_values: oldValues,
         new_values: newValues,
         approval_required: false,

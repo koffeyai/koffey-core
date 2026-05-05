@@ -18,6 +18,10 @@ const DELETE_DEAL_PATTERNS = [
   /\b(?:delete|remove|erase|permanently\s+delete)\b[\s\S]*\b(?:deal|opportunit(?:y|ies))\b/i,
   /\b(?:deal|opportunit(?:y|ies))\b[\s\S]*\b(?:delete|remove|erase)\b/i,
 ];
+const UPDATE_DEAL_PATTERNS = [
+  /\b(?:update|change|set|move)\b[\s\S]*\b(?:deal|opportunit(?:y|ies))\b/i,
+  /\b(?:deal|opportunit(?:y|ies))\b[\s\S]*\b(?:update|change|set|move)\b/i,
+];
 const SCHEDULE_MEETING_PATTERNS = [
   /\b(?:schedule|book|set\s+up|arrange)\b[\s\S]*\b(?:call|meeting|calendar\s+invite|meeting\s+invite|lunch|coffee)\b/i,
   /\b(?:check|find)\b[\s\S]*\bcalendar\s+availability\b/i,
@@ -42,6 +46,8 @@ const PENDING_DRAFT_EMAIL_ASSISTANT_PATTERN = /\bdraft_email\b[\s\S]*\bneed a re
 const SEQUENCE_FILLER_PATTERN = /\b(?:use|the|sequence|cadence|please|thanks|thank\s+you|for|to|in|on)\b/gi;
 const DELETE_CONFIRMATION_PATTERN = /^(?:yes|yep|yeah|confirm|confirmed|proceed|delete it|remove it|go ahead|do it|permanently delete it)[\s.!?]*$/i;
 const PENDING_DELETE_ASSISTANT_PATTERN = /\bpermanently delete\b[\s\S]*\breply\s+["']?yes["']?\s+to\s+confirm deletion\b/i;
+const UPDATE_CONFIRMATION_PATTERN = /^(?:yes|yep|yeah|confirm|confirmed|go ahead|proceed|do it|update it|apply it)[\s.!?]*$/i;
+const PENDING_UPDATE_DEAL_ASSISTANT_PATTERN = /\bwould be overwritten\b[\s\S]*\breply\s+["']?yes["']?\s+to\s+confirm this update\b/i;
 const SCHEDULE_CONFIRMATION_PATTERN = /^(?:yes|yep|yeah|confirm|confirmed|send it|send the email|go ahead|proceed|do it|looks good)[\s.!?]*$/i;
 const SCHEDULE_CANCEL_PATTERN = /^(?:no|nope|cancel(?:\s+(?:the\s+)?(?:scheduling\s+)?(?:email|draft|message))?|stop|discard|never mind|nevermind)(?:\s+(?:it|this))?[\s.!?]*$/i;
 
@@ -62,6 +68,12 @@ function parseAmount(match) {
         ? 1_000
         : 1;
   return Math.round(numeric * multiplier);
+}
+
+function parseAmountFromText(value) {
+  const rawValue = normalizeWhitespace(value);
+  if (!rawValue) return null;
+  return parseAmount(rawValue.match(/\$?\s*(\d[\d,]*(?:\.\d+)?)\s*([kmb])?\b/i));
 }
 
 function sanitizeAccountName(value) {
@@ -268,6 +280,22 @@ function extractTrailingAccountNameFromCreateDealMessage(message) {
   return null;
 }
 
+function extractExplicitCreateDealNameFromMessage(message) {
+  const rawMessage = normalizeWhitespace(message);
+  if (!rawMessage) return null;
+
+  const explicit = rawMessage.match(/\b(?:create|add|new)\b[\s\S]*?\b(?:deal|opportunit(?:y|ies))\s+(?:named|called)\s+(.+?)(?=\s+(?:for|with)\s+(?:account|company)\b|\s*,|\s+\b(?:amount|stage|close\s+date|closing|primary\s+contact)\b|[.!?]|$)/i);
+  return sanitizeGenericEntityName(explicit?.[1] || '');
+}
+
+function extractExplicitCreateDealAccountNameFromMessage(message) {
+  const rawMessage = normalizeWhitespace(message);
+  if (!rawMessage) return null;
+
+  const explicit = rawMessage.match(/\b(?:for|with)\s+(?:the\s+)?(?:account|company)\s+(.+?)(?=\s*(?:,|;|\s+(?:with\s+)?(?:primary\s+)?contact\b|\s+amount\b|\s+stage\b|\s+(?:close\s+date|closing)\b|[.!?]|$))/i);
+  return sanitizeAccountName(explicit?.[1] || '');
+}
+
 function sanitizeDraftContext(value) {
   const cleaned = normalizeWhitespace(value)
     .replace(/^[("'`“”‘’\s]+|[)"'`“”‘’.,!?;\s]+$/g, '')
@@ -367,16 +395,16 @@ function extractContactNameFromMessage(message, options = {}) {
     .replace(/\s+/g, ' ')
     .trim();
 
-  const useAsContact = explicitMessage.match(/\b(?:use|set|make)\s+([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,3})\s+as\s+(?:the\s+)?(?:primary\s+)?contact\b/i);
+  const useAsContact = explicitMessage.match(/\b(?:use|set|make)\s+([A-Za-z][A-Za-z0-9'.-]*(?:\s+[A-Za-z0-9][A-Za-z0-9'.-]*){0,4})\s+as\s+(?:the\s+)?(?:primary\s+)?contact\b/i);
   if (useAsContact?.[1]) return sanitizeContactName(useAsContact[1]);
 
-  const pronounContact = explicitMessage.match(/\b(?:it['’`]?s|its|it\s+is)\s+([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,3})(?=\s+(?:and|with|,|\.|$))/i);
+  const pronounContact = explicitMessage.match(/\b(?:it['’`]?s|its|it\s+is)\s+([A-Za-z][A-Za-z0-9'.-]*(?:\s+[A-Za-z0-9][A-Za-z0-9'.-]*){0,4})(?=\s+(?:and|with|,|\.|$))/i);
   if (pronounContact?.[1]) {
     const contact = sanitizeContactName(pronounContact[1]);
     if (looksLikeLooseContactName(contact)) return contact;
   }
 
-  const explicit = explicitMessage.match(/\b(?:primary\s+contact(?:\s+name)?|contact(?:\s+name)?)\s*(?:is|=|:)?\s*([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,3})\b/i)
+  const explicit = explicitMessage.match(/\b(?:primary\s+contact(?:\s+name)?|contact(?:\s+name)?)\s*(?:is|=|:)?\s*([A-Za-z][A-Za-z0-9'.-]*(?:\s+[A-Za-z0-9][A-Za-z0-9'.-]*){0,4})\b/i)
     || explicitMessage.match(/\b(?:primary\s+contact(?:\s+name)?|contact(?:\s+name)?)\s*(?:is|=|:)\s*([^,.;\n]+)$/i)
     || explicitMessage.match(/\b(?:primary\s+contact(?:\s+name)?|contact(?:\s+name)?)\s*(?:is|=|:)?\s*([^,.;\n]+?)(?:\s+\b(?:and|with|closing|close|expected)\b|$)/i);
   if (explicit?.[1]) return sanitizeContactName(explicit[1]);
@@ -481,7 +509,7 @@ function extractTitleFromTaskMessage(message) {
     if (title) return title;
   }
 
-  const taskNamed = rawMessage.match(/\b(?:task|next\s+step|todo|to-do|reminder)\s+(?:to|for|called|named)\s+(.+?)(?=\s+(?:for|on|with|at|today|tomorrow|next\s+\w+|due\b|by\b)|[,.!?]?$)/i);
+  const taskNamed = rawMessage.match(/\b(?:task|next\s+step|todo|to-do|reminder)\s+(?:to|for|called|named|titled)\s+(.+?)(?=\s+for\s+(?:the\s+)?(?:deal|opportunit(?:y|ies)|account|company)\b|\s+(?:on|at|today|tomorrow|next\s+\w+|due\b|by\b|priority\b)|[,.!?]?$)/i);
   if (taskNamed?.[1] && !/\b(?:deal|account|company|contact)\b/i.test(taskNamed[1])) {
     const title = sanitizeTaskTitle(taskNamed[1]);
     if (title) return title;
@@ -504,6 +532,26 @@ function extractDueDateFromTaskMessage(message) {
 
   const bare = rawMessage.match(/\b(today|tomorrow|tonight|next\s+(?:week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/i);
   return bare?.[1] || null;
+}
+
+function extractDealNameFromTaskMessage(message) {
+  const rawMessage = normalizeWhitespace(message);
+  if (!rawMessage) return null;
+
+  const explicit = rawMessage.match(/\b(?:for|on|about|regarding)\s+(?:the\s+)?(?:deal|opportunit(?:y|ies))\s+(.+?)(?=\s*(?:,|\s+(?:due|by|priority|today|tomorrow|tonight|next\s+\w+)\b|[.!?]|$))/i);
+  return sanitizeGenericEntityName(explicit?.[1] || '');
+}
+
+function extractPriorityFromTaskMessage(message) {
+  const rawMessage = normalizeWhitespace(message);
+  if (!rawMessage) return null;
+
+  const explicit = rawMessage.match(/\bpriority\s*(?:is|=|:)?\s*(high|medium|low)\b/i)
+    || rawMessage.match(/\b(high|medium|low)\s+priority\b/i);
+  if (explicit?.[1]) return explicit[1].toLowerCase();
+  if (/\b(?:urgent|critical|asap)\b/i.test(rawMessage)) return 'high';
+  if (/\bwhenever\b/i.test(rawMessage)) return 'low';
+  return null;
 }
 
 function extractScheduleMeetingType(message) {
@@ -601,6 +649,7 @@ function extractScheduleArgsFromMessage(message) {
 function extractAccountNameFromTaskMessage(message) {
   const rawMessage = normalizeWhitespace(message);
   if (!rawMessage) return null;
+  if (/\b(?:for|on|about|regarding)\s+(?:the\s+)?(?:deal|opportunit(?:y|ies))\b/i.test(rawMessage)) return null;
 
   const explicit = rawMessage.match(/\b(?:for|on|about|regarding)\s+(.+?)(?=\s+(?:due|by|today|tomorrow|tonight|next\s+\w+|to\s+\w+|with\s+(?:email|primary|contact)|because|from\s+\w+)|[,.!?]?$)/i);
   if (explicit?.[1]) return sanitizeAccountIdentifier(explicit[1]);
@@ -615,7 +664,8 @@ function extractContactNameFromTaskMessage(message) {
   const rawMessage = normalizeWhitespace(message);
   if (!rawMessage) return null;
 
-  const withPerson = rawMessage.match(/\b(?:follow\s+up\s+with|call|email|meet\s+with)\s+([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,3})(?=\s+(?:at|from|for|about|regarding|due|by|today|tomorrow|next\b)|[,.!?]?$)/i);
+  const withPerson = rawMessage.match(/\b(?:follow\s+up\s+with|meet\s+with)\s+(.+?)(?=\s+for\s+(?:the\s+)?(?:deal|opportunit(?:y|ies)|account|company)\b|\s+(?:at|from|about|regarding|due|by|today|tomorrow|next\b)|[,.!?]?$)/i)
+    || rawMessage.match(/\b(?:call|email)\s+(?!for\b)(.+?)(?=\s+for\s+(?:the\s+)?(?:deal|opportunit(?:y|ies)|account|company)\b|\s+(?:at|from|about|regarding|due|by|today|tomorrow|next\b)|[,.!?]?$)/i);
   return withPerson?.[1] ? sanitizeContactName(withPerson[1]) : null;
 }
 
@@ -631,14 +681,17 @@ function extractCreateTaskArgsFromMessage(message) {
   const dueDate = extractDueDateFromTaskMessage(rawMessage);
   if (dueDate) args.due_date = dueDate;
 
+  const dealName = extractDealNameFromTaskMessage(rawMessage);
+  if (dealName) args.deal_name = dealName;
+
   const accountName = extractAccountNameFromTaskMessage(rawMessage);
-  if (accountName) args.account_name = accountName;
+  if (!dealName && accountName) args.account_name = accountName;
 
   const contactName = extractContactNameFromTaskMessage(rawMessage);
   if (contactName) args.contact_name = contactName;
 
-  if (/\b(urgent|critical|high priority|asap)\b/i.test(rawMessage)) args.priority = 'high';
-  if (/\b(low priority|whenever)\b/i.test(rawMessage)) args.priority = 'low';
+  const priority = extractPriorityFromTaskMessage(rawMessage);
+  if (priority) args.priority = priority;
 
   return args;
 }
@@ -656,7 +709,7 @@ function extractCreateContactArgsFromMessage(message) {
   const email = extractContactEmailFromMessage(rawMessage);
   const companyMatch = rawMessage.match(/\b(?:for|at)\s+(.+?)(?=\s+(?:with\s+)?(?:email|e-mail|title|phone|notes?)\b|[,.!?]?$)/i);
   const company = sanitizeAccountIdentifier(companyMatch?.[1] || '');
-  const titleMatch = rawMessage.match(/\btitle\s*(?:is|=|:)?\s*([^,.;]+?)(?=\s+(?:with|email|phone|notes?)\b|[,.!?]?$)/i)
+  const titleMatch = rawMessage.match(/\btitle\s*(?:is|=|:)?\s*([^,.;]+?)(?=\s*,?\s+(?:at|for|with|email|e-mail|phone|notes?|account|company)\b|[,.!?]?$)/i)
     || rawMessage.match(/\bas\s+(?:an?\s+)?([^,.;]+?)\s+(?:at|for)\b/i);
   const title = sanitizeGenericEntityName(titleMatch?.[1] || '');
 
@@ -665,6 +718,55 @@ function extractCreateContactArgsFromMessage(message) {
   if (company) args.company = company;
   if (title && !/\bcontact|lead\b/i.test(title)) args.title = title;
   return args;
+}
+
+function extractUpdateDealStageFromMessage(message) {
+  const rawMessage = normalizeWhitespace(message);
+  if (!rawMessage) return null;
+
+  const explicit = rawMessage.match(/\bstage\s*(?:to|=|:|is)?\s*(prospecting|qualified|qualification|proposal|negotiation|closed[\s_-]?won|closed[\s_-]?lost)\b/i)
+    || rawMessage.match(/\b(?:move|set|change)\b[\s\S]*?\bto\s+(prospecting|qualified|qualification|proposal|negotiation|closed[\s_-]?won|closed[\s_-]?lost)\b/i);
+  if (!explicit?.[1]) return null;
+  return explicit[1].toLowerCase().replace(/\s+/g, '_').replace(/^qualification$/, 'qualified');
+}
+
+function extractUpdateDealNameFromMessage(message) {
+  const rawMessage = normalizeWhitespace(message);
+  if (!rawMessage) return null;
+
+  const explicit = rawMessage.match(/\b(?:update|change|set)\s+(?:the\s+)?(?:deal|opportunit(?:y|ies))\s+(?:named|called)?\s*(.+?)(?=\s*(?::|;|,|\s+(?:change|set|move|stage|amount|close\s+date|expected\s+close\s+date|probability)\b))/i)
+    || rawMessage.match(/\bmove\s+(.+?)\s+to\s+(?:prospecting|qualified|qualification|proposal|negotiation|closed[\s_-]?won|closed[\s_-]?lost)\b/i)
+    || rawMessage.match(/\b(?:deal|opportunit(?:y|ies))\s+(?:named|called)?\s*(.+?)\s+(?:to|stage|amount|close\s+date|expected\s+close\s+date|probability)\b/i);
+  return sanitizeGenericEntityName(explicit?.[1] || '');
+}
+
+export function extractUpdateDealArgsFromMessage(message) {
+  const rawMessage = normalizeWhitespace(message);
+  if (!rawMessage) return null;
+  if (!UPDATE_DEAL_PATTERNS.some((pattern) => pattern.test(rawMessage))) return null;
+
+  const updates = {};
+  const stage = extractUpdateDealStageFromMessage(rawMessage);
+  if (stage) updates.stage = stage;
+
+  const amountMatch = rawMessage.match(/\bamount\s*(?:to|=|:|is)?\s*(\$?\s*\d[\d,]*(?:\.\d+)?\s*[kmb]?)\b/i)
+    || rawMessage.match(/\b(?:to|at|for)\s*(\$?\s*\d[\d,]*(?:\.\d+)?\s*[kmb]?)\b/i);
+  const amount = parseAmountFromText(amountMatch?.[1] || '');
+  if (amount != null) updates.amount = amount;
+
+  const closeDateMatch = rawMessage.match(/\b(?:expected\s+close\s+date|close\s+date|closing)\s*(?:to|=|:|is)?\s*((?:today|tomorrow|tonight|next\s+(?:week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|this\s+(?:week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:,\s*\d{4})?))\b/i);
+  if (closeDateMatch?.[1]) updates.expected_close_date = closeDateMatch[1];
+
+  const probabilityMatch = rawMessage.match(/\bprobability\s*(?:to|=|:|is)?\s*(\d{1,3})\s*%?\b/i);
+  if (probabilityMatch?.[1]) updates.probability = Number(probabilityMatch[1]);
+
+  if (Object.keys(updates).length === 0) return null;
+
+  const dealName = extractUpdateDealNameFromMessage(rawMessage);
+  return {
+    ...(dealName ? { deal_name: dealName } : {}),
+    updates,
+  };
 }
 
 function extractDeleteDealArgsFromMessage(message) {
@@ -691,6 +793,7 @@ export function hasDeterministicMutationCue(message) {
     || CREATE_CONTACT_PATTERNS.some((pattern) => pattern.test(rawMessage))
     || CREATE_TASK_PATTERNS.some((pattern) => pattern.test(rawMessage))
     || DELETE_DEAL_PATTERNS.some((pattern) => pattern.test(rawMessage))
+    || UPDATE_DEAL_PATTERNS.some((pattern) => pattern.test(rawMessage))
     || SCHEDULE_MEETING_PATTERNS.some((pattern) => pattern.test(rawMessage))
     || UPDATE_ACCOUNT_RENAME_PATTERN.test(rawMessage);
 }
@@ -701,7 +804,9 @@ export function extractCreateDealArgsFromMessage(message) {
   if (!CREATE_DEAL_PATTERNS.some((pattern) => pattern.test(rawMessage))) return null;
 
   const amount = parseAmount(rawMessage.match(AMOUNT_CUE_PATTERN) || rawMessage.match(AMOUNT_PREFIX_PATTERN));
-  const accountCandidate = rawMessage.match(ACCOUNT_BEFORE_AMOUNT_PATTERN)?.[1]
+  const explicitDealName = extractExplicitCreateDealNameFromMessage(rawMessage);
+  const accountCandidate = extractExplicitCreateDealAccountNameFromMessage(rawMessage)
+    || rawMessage.match(ACCOUNT_BEFORE_AMOUNT_PATTERN)?.[1]
     || rawMessage.match(ACCOUNT_AFTER_AMOUNT_PATTERN)?.[1]
     || rawMessage.match(ACCOUNT_TRAILING_PATTERN)?.[1]
     || extractTrailingAccountNameFromCreateDealMessage(rawMessage)
@@ -715,9 +820,12 @@ export function extractCreateDealArgsFromMessage(message) {
   if (isAmountLikeValue(accountName)) return null;
 
   const args = { account_name: accountName };
+  if (explicitDealName) args.name = explicitDealName;
   if (amount != null) args.amount = amount;
   const closeDate = extractCloseDateFromMessage(rawMessage);
   if (closeDate) args.close_date = closeDate;
+  const stage = extractUpdateDealStageFromMessage(rawMessage);
+  if (stage) args.stage = stage;
   const contactName = extractContactNameFromMessage(rawMessage);
   if (contactName) args.contact_name = contactName;
   const contactEmail = extractContactEmailFromMessage(rawMessage);
@@ -830,6 +938,41 @@ export function buildDeterministicUpdateAccountRenamePlan(message, intent, allow
       type: 'function',
       function: {
         name: 'update_account',
+        arguments: JSON.stringify(args),
+      },
+    }],
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+  };
+}
+
+export function buildDeterministicUpdateDealPlan(message, intent, allowedToolNames = new Set()) {
+  const toolNames = allowedToolNames instanceof Set ? allowedToolNames : new Set(allowedToolNames || []);
+  if (!toolNames.has('update_deal')) return null;
+
+  const args = extractUpdateDealArgsFromMessage(message);
+  if (!args) return null;
+
+  const normalizedIntent = intent || {};
+  const domains = new Set((normalizedIntent.domains || []).map((domain) => String(domain || '').toLowerCase()));
+  const entityType = String(normalizedIntent.entityType || '').toLowerCase();
+  const explicitIntent = String(normalizedIntent.intent || '').toLowerCase();
+  const mentionsDeal = /\b(?:deal|opportunit(?:y|ies))\b/i.test(String(message || ''));
+  const clearlyConflictingIntent = explicitIntent
+    && explicitIntent !== 'crm_mutation'
+    && !domains.has('update')
+    && entityType
+    && entityType !== 'deal'
+    && !mentionsDeal;
+  if (clearlyConflictingIntent) return null;
+
+  return {
+    provider: 'deterministic',
+    model: 'deterministic-update-deal',
+    toolCalls: [{
+      id: 'deterministic_update_deal_0',
+      type: 'function',
+      function: {
+        name: 'update_deal',
         arguments: JSON.stringify(args),
       },
     }],
@@ -1093,6 +1236,77 @@ export function buildDeterministicPendingDeleteDealPlan(message, conversationHis
       type: 'function',
       function: {
         name: 'delete_deal',
+        arguments: JSON.stringify({ ...pending, confirmed: true }),
+      },
+    }],
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+  };
+}
+
+export function inferPendingUpdateDealFromHistory(conversationHistory = []) {
+  const history = Array.isArray(conversationHistory) ? conversationHistory : [];
+
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const assistantMessage = history[i];
+    if (assistantMessage?.role !== 'assistant') continue;
+
+    const assistantContent = normalizeWhitespace(assistantMessage?.content || '');
+    if (!PENDING_UPDATE_DEAL_ASSISTANT_PATTERN.test(assistantContent)) continue;
+
+    for (let j = i - 1; j >= 0; j -= 1) {
+      const userMessage = history[j];
+      if (userMessage?.role !== 'user') continue;
+
+      const updateArgs = extractUpdateDealArgsFromMessage(userMessage?.content || '');
+      if (updateArgs?.updates && Object.keys(updateArgs.updates).length > 0) {
+        return updateArgs;
+      }
+    }
+  }
+
+  return null;
+}
+
+export function buildDeterministicPendingUpdateDealPlan(message, conversationHistory, allowedToolNames = new Set()) {
+  const toolNames = allowedToolNames instanceof Set ? allowedToolNames : new Set(allowedToolNames || []);
+  if (!toolNames.has('update_deal')) return null;
+  if (!UPDATE_CONFIRMATION_PATTERN.test(normalizeWhitespace(message))) return null;
+
+  const pending = inferPendingUpdateDealFromHistory(conversationHistory);
+  if (!pending?.updates || Object.keys(pending.updates).length === 0) return null;
+
+  return {
+    provider: 'deterministic',
+    model: 'deterministic-pending-update-deal',
+    toolCalls: [{
+      id: 'deterministic_pending_update_deal_0',
+      type: 'function',
+      function: {
+        name: 'update_deal',
+        arguments: JSON.stringify({ ...pending, confirmed: true }),
+      },
+    }],
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+  };
+}
+
+export function buildDeterministicPendingUpdateDealPlanFromData(message, pendingUpdate, allowedToolNames = new Set()) {
+  const toolNames = allowedToolNames instanceof Set ? allowedToolNames : new Set(allowedToolNames || []);
+  if (!toolNames.has('update_deal')) return null;
+  if (!UPDATE_CONFIRMATION_PATTERN.test(normalizeWhitespace(message))) return null;
+
+  const pending = pendingUpdate?.pending_update || pendingUpdate;
+  if (!pending?.updates || Object.keys(pending.updates).length === 0) return null;
+  if (!pending.deal_id && !pending.deal_name) return null;
+
+  return {
+    provider: 'deterministic',
+    model: 'deterministic-pending-update-deal',
+    toolCalls: [{
+      id: 'deterministic_pending_update_deal_0',
+      type: 'function',
+      function: {
+        name: 'update_deal',
         arguments: JSON.stringify({ ...pending, confirmed: true }),
       },
     }],

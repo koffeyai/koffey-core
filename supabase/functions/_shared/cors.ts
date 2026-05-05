@@ -97,7 +97,7 @@ export function getCorsHeaders(req?: Request): Record<string, string> {
 
   return {
     'Access-Control-Allow-Origin': allowedOrigin,
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-internal-call, x-twilio-signature, x-telegram-bot-api-secret-token',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-trace-id, x-request-id, x-internal-call, x-twilio-signature, x-telegram-bot-api-secret-token',
     'Access-Control-Allow-Methods': 'POST, GET, OPTIONS, PUT, DELETE',
     'Access-Control-Max-Age': '86400',
   };

@@ -25,12 +25,15 @@ import {
   ExternalLink,
   Zap,
   Radio,
-  AlertCircle
+  AlertCircle,
+  Mail
 } from 'lucide-react';
 import { useCalendarSync } from '@/hooks/useCalendarSync';
 import {
   connectCalendar,
+  connectEmail,
   connectGoogleDrive,
+  checkGmailConnection,
   checkGoogleCalendarConnection,
   checkGoogleDriveConnection,
   describeGoogleOAuthError,
@@ -43,6 +46,7 @@ import { useSearchParams } from 'react-router-dom';
 interface ConnectionStatus {
   calendar: { connected: boolean; scopes: string[] };
   drive: { connected: boolean; scopes: string[] };
+  email: { connected: boolean; scopes: string[] };
 }
 
 interface SyncStats {
@@ -71,7 +75,8 @@ export function IntegrationsSettings() {
   const [userId, setUserId] = useState<string | null>(null);
   const [connections, setConnections] = useState<ConnectionStatus>({
     calendar: { connected: false, scopes: [] },
-    drive: { connected: false, scopes: [] }
+    drive: { connected: false, scopes: [] },
+    email: { connected: false, scopes: [] }
   });
   const [syncStats, setSyncStats] = useState<SyncStats>({ lastSynced: null, syncCount: 0 });
   const [watchStatus, setWatchStatus] = useState<WatchStatus>({ hasActiveWatch: false });
@@ -98,14 +103,16 @@ export function IntegrationsSettings() {
       setUserId(session.user.id);
 
       // Check connections in parallel
-      const [calendarStatus, driveStatus] = await Promise.all([
+      const [calendarStatus, driveStatus, emailStatus] = await Promise.all([
         checkGoogleCalendarConnection(),
-        checkGoogleDriveConnection()
+        checkGoogleDriveConnection(),
+        checkGmailConnection()
       ]);
 
       setConnections({
         calendar: calendarStatus,
-        drive: driveStatus
+        drive: driveStatus,
+        email: emailStatus
       });
 
       // Sync stats default (columns not yet in profiles table)
@@ -239,6 +246,19 @@ export function IntegrationsSettings() {
       toast({
         title: 'Google connection failed',
         description: connectError instanceof Error ? connectError.message : 'Failed to start Google Drive connection.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleConnectEmail = async () => {
+    if (!userId) return;
+    try {
+      await connectEmail({ id: userId }, '/settings');
+    } catch (connectError) {
+      toast({
+        title: 'Google connection failed',
+        description: connectError instanceof Error ? connectError.message : 'Failed to start Gmail connection.',
         variant: 'destructive',
       });
     }
@@ -481,6 +501,60 @@ export function IntegrationsSettings() {
             >
               <Calendar className="h-4 w-4 mr-2" />
               {deploymentStatus && !deploymentStatus.configured ? 'Google setup required' : 'Connect Google Calendar'}
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Gmail */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-red-100 rounded-lg">
+                <Mail className="h-5 w-5 text-red-600" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">Gmail</CardTitle>
+                <CardDescription>
+                  Send scheduling emails from your Google account
+                </CardDescription>
+              </div>
+            </div>
+            <Badge variant={connections.email.connected ? 'default' : 'secondary'}>
+              {connections.email.connected ? (
+                <><CheckCircle2 className="h-3 w-3 mr-1" /> Connected</>
+              ) : connections.email.scopes.length > 0 ? (
+                <><AlertCircle className="h-3 w-3 mr-1" /> Needs scope</>
+              ) : (
+                <><XCircle className="h-3 w-3 mr-1" /> Not connected</>
+              )}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {connections.email.connected ? (
+            <div className="p-3 bg-red-50 rounded-lg flex items-center gap-3">
+              <CheckCircle2 className="h-5 w-5 text-red-600" />
+              <div>
+                <div className="font-medium text-red-800">Gmail connected</div>
+                <div className="text-sm text-red-600">
+                  Scheduling emails can be sent from your Gmail account.
+                </div>
+              </div>
+            </div>
+          ) : (
+            <Button
+              onClick={handleConnectEmail}
+              className="w-full"
+              disabled={Boolean(deploymentStatus && !deploymentStatus.configured)}
+            >
+              <Mail className="h-4 w-4 mr-2" />
+              {deploymentStatus && !deploymentStatus.configured
+                ? 'Google setup required'
+                : connections.email.scopes.length > 0
+                  ? 'Enable Gmail sending'
+                  : 'Connect Gmail'}
             </Button>
           )}
         </CardContent>

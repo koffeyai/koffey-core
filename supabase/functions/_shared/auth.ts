@@ -21,6 +21,14 @@ export interface AuthResult {
   userId: string;
 }
 
+export interface OrganizationAccessResult {
+  organizationId: string;
+  role: string;
+  membershipId: string;
+  salesRole: string | null;
+  salesRoleStatus: string | null;
+}
+
 /**
  * Authenticate a request using JWT from Authorization header.
  * 
@@ -73,6 +81,61 @@ export async function authenticateRequest(req: Request): Promise<AuthResult> {
     user,
     supabase,
     userId: user.id
+  };
+}
+
+/**
+ * Resolve the organization a user is allowed to operate against.
+ *
+ * If a specific organization is requested, the user must be an active member of
+ * that organization. Without a requested organization, the first active
+ * membership is used as the default context.
+ */
+export async function resolveAuthorizedOrganization(
+  supabase: SupabaseClient,
+  userId: string,
+  requestedOrganizationId?: string | null
+): Promise<OrganizationAccessResult | null> {
+  const normalizedUserId = String(userId || '').trim();
+  const normalizedOrganizationId = String(requestedOrganizationId || '').trim();
+
+  if (!normalizedUserId) {
+    throw new AuthError('Authenticated user required', 401);
+  }
+
+  let query = supabase
+    .from('organization_members')
+    .select('id, organization_id, role, sales_role, sales_role_status')
+    .eq('user_id', normalizedUserId)
+    .eq('is_active', true);
+
+  if (normalizedOrganizationId) {
+    query = query.eq('organization_id', normalizedOrganizationId);
+  }
+
+  const { data, error } = await query
+    .order('joined_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error('Organization access lookup failed:', error.message);
+    throw new AuthError('Could not resolve organization access', 500);
+  }
+
+  if (!data?.organization_id) {
+    if (normalizedOrganizationId) {
+      throw new AuthError('You do not have access to this organization', 403);
+    }
+    return null;
+  }
+
+  return {
+    organizationId: data.organization_id,
+    role: data.role || 'member',
+    membershipId: data.id,
+    salesRole: data.sales_role || null,
+    salesRoleStatus: data.sales_role_status || null,
   };
 }
 

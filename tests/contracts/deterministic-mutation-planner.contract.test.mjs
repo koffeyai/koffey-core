@@ -3,9 +3,13 @@ import assert from 'node:assert/strict';
 import {
   buildDeterministicPendingUpdateAccountRenamePlan,
   buildDeterministicUpdateAccountRenamePlan,
+  buildDeterministicPendingUpdateDealPlan,
+  buildDeterministicPendingUpdateDealPlanFromData,
+  buildDeterministicUpdateDealPlan,
   inferPendingAccountRenameFromHistory,
   buildDeterministicCreateAccountThenDealPlan,
   extractCreateDealArgsFromMessage,
+  extractUpdateDealArgsFromMessage,
   buildDeterministicCreateDealPlan,
   buildDeterministicCreateTaskPlan,
   buildDeterministicScheduleMeetingPlan,
@@ -20,6 +24,7 @@ import {
   buildDeterministicPendingSequencePlan,
   inferPendingDealDataFromHistory,
   repairScheduleMeetingArgsFromMessage,
+  inferPendingUpdateDealFromHistory,
 } from '../../supabase/functions/unified-chat/intent/deterministic-mutation-planner.mjs';
 
 test('extractCreateDealArgsFromMessage parses account and amount from create opportunity phrasing', () => {
@@ -81,6 +86,20 @@ test('extractCreateDealArgsFromMessage keeps close date and contact when the use
       close_date: '2026-05-20',
       contact_name: 'Pat',
     },
+  );
+});
+
+test('extractCreateDealArgsFromMessage preserves explicitly named opportunities', () => {
+  assert.deepEqual(
+    extractCreateDealArgsFromMessage('Create a deal/opportunity named Fix Cycle Opportunity FIX-123 for account Fix Cycle Account FIX-123, primary contact Casey Fix FIX-123, amount 42000, stage Proposal, close date 2026-06-30.'),
+    {
+      account_name: 'Fix Cycle Account FIX-123',
+      name: 'Fix Cycle Opportunity FIX-123',
+      amount: 42000,
+      close_date: '2026-06-30',
+      stage: 'proposal',
+      contact_name: 'Casey Fix FIX-123',
+    }
   );
 });
 
@@ -196,6 +215,139 @@ test('buildDeterministicPendingUpdateAccountRenamePlan resumes rename flow from 
   );
 });
 
+test('buildDeterministicUpdateDealPlan handles explicit deal stage and amount updates', () => {
+  const message = 'Update the deal Cycle Opportunity CYCLE-123: change stage to Negotiation and amount to 45000.';
+
+  assert.deepEqual(
+    extractUpdateDealArgsFromMessage(message),
+    {
+      deal_name: 'Cycle Opportunity CYCLE-123',
+      updates: {
+        stage: 'negotiation',
+        amount: 45000,
+      },
+    },
+  );
+
+  const plan = buildDeterministicUpdateDealPlan(
+    message,
+    {
+      intent: 'crm_mutation',
+      entityType: 'deal',
+      domains: ['update'],
+    },
+    new Set(['update_deal', 'search_crm']),
+  );
+
+  assert.equal(plan?.provider, 'deterministic');
+  assert.equal(plan?.model, 'deterministic-update-deal');
+  assert.equal(plan?.toolCalls?.[0]?.function?.name, 'update_deal');
+  assert.deepEqual(
+    JSON.parse(plan.toolCalls[0].function.arguments),
+    {
+      deal_name: 'Cycle Opportunity CYCLE-123',
+      updates: {
+        stage: 'negotiation',
+        amount: 45000,
+      },
+    },
+  );
+});
+
+test('buildDeterministicUpdateDealPlan handles deal named phrasing', () => {
+  const plan = buildDeterministicUpdateDealPlan(
+    'Update deal named Fix Cycle Opportunity FIX-123: set stage to negotiation and amount to $45,000.',
+    {
+      intent: 'crm_mutation',
+      entityType: 'deal',
+      domains: ['update'],
+    },
+    new Set(['update_deal']),
+  );
+
+  assert.equal(plan?.provider, 'deterministic');
+  assert.equal(plan?.toolCalls?.[0]?.function?.name, 'update_deal');
+  assert.deepEqual(
+    JSON.parse(plan.toolCalls[0].function.arguments),
+    {
+      deal_name: 'Fix Cycle Opportunity FIX-123',
+      updates: {
+        stage: 'negotiation',
+        amount: 45000,
+      },
+    },
+  );
+});
+
+test('buildDeterministicPendingUpdateDealPlan resumes amount overwrite confirmation', () => {
+  const history = [
+    { role: 'user', content: 'Update the deal Cycle Opportunity CYCLE-123: change stage to Negotiation and amount to 45000.' },
+    { role: 'assistant', content: 'I found existing values on **Cycle Opportunity CYCLE-123** that would be overwritten: Amount: $42,000 -> $45,000. Reply "yes" to confirm this update, or tell me what to change.' },
+  ];
+
+  assert.deepEqual(
+    inferPendingUpdateDealFromHistory(history),
+    {
+      deal_name: 'Cycle Opportunity CYCLE-123',
+      updates: {
+        stage: 'negotiation',
+        amount: 45000,
+      },
+    },
+  );
+
+  const plan = buildDeterministicPendingUpdateDealPlan(
+    'yes',
+    history,
+    new Set(['update_deal']),
+  );
+
+  assert.equal(plan?.provider, 'deterministic');
+  assert.equal(plan?.model, 'deterministic-pending-update-deal');
+  assert.equal(plan?.toolCalls?.[0]?.function?.name, 'update_deal');
+  assert.deepEqual(
+    JSON.parse(plan.toolCalls[0].function.arguments),
+    {
+      deal_name: 'Cycle Opportunity CYCLE-123',
+      updates: {
+        stage: 'negotiation',
+        amount: 45000,
+      },
+      confirmed: true,
+    },
+  );
+});
+
+test('buildDeterministicPendingUpdateDealPlanFromData resumes stored pending update confirmation', () => {
+  const plan = buildDeterministicPendingUpdateDealPlanFromData(
+    'yes',
+    {
+      deal_id: 'deal-123',
+      deal_name: 'Cycle Opportunity CYCLE-123',
+      updates: {
+        stage: 'negotiation',
+        amount: 45000,
+      },
+    },
+    new Set(['update_deal']),
+  );
+
+  assert.equal(plan?.provider, 'deterministic');
+  assert.equal(plan?.model, 'deterministic-pending-update-deal');
+  assert.deepEqual(
+    JSON.parse(plan.toolCalls[0].function.arguments),
+    {
+      deal_id: 'deal-123',
+      deal_name: 'Cycle Opportunity CYCLE-123',
+      updates: {
+        stage: 'negotiation',
+        amount: 45000,
+      },
+      confirmed: true,
+    },
+  );
+});
+
 test('buildDeterministicCreateDealPlan returns a create_deal tool call for simple create requests', () => {
   const plan = buildDeterministicCreateDealPlan(
     'please create an opportunity for acme for $20k MRR',
@@ -279,6 +431,32 @@ test('buildDeterministicCreateTaskPlan routes explicit follow-up tasks away from
       title: 'Send a pilot recap from ETH Denver',
       due_date: 'tomorrow',
       account_name: 'QA Chat Smoke Test',
+    },
+  );
+});
+
+test('buildDeterministicCreateTaskPlan keeps titled task details and deal linkage', () => {
+  const plan = buildDeterministicCreateTaskPlan(
+    'Create a task titled Follow up with Casey Cycle CYCLE-123 for the deal Cycle Opportunity CYCLE-123, due 2026-05-12, priority high.',
+    {
+      intent: 'crm_mutation',
+      entityType: 'task',
+      domains: ['create'],
+    },
+    new Set(['create_task']),
+  );
+
+  assert.equal(plan?.provider, 'deterministic');
+  assert.equal(plan?.model, 'deterministic-create-task');
+  assert.equal(plan?.toolCalls?.[0]?.function?.name, 'create_task');
+  assert.deepEqual(
+    JSON.parse(plan.toolCalls[0].function.arguments),
+    {
+      title: 'Follow up with Casey Cycle CYCLE-123',
+      due_date: '2026-05-12',
+      deal_name: 'Cycle Opportunity CYCLE-123',
+      contact_name: 'Casey Cycle CYCLE-123',
+      priority: 'high',
     },
   );
 });
@@ -563,6 +741,30 @@ test('buildDeterministicCreateContactPlan extracts contact, account, email, and 
       email: 'pat.qa@example.com',
       company: 'QA Chat Smoke Test',
       title: 'CTO',
+    },
+  );
+});
+
+test('buildDeterministicCreateContactPlan keeps comma-separated title before account phrase', () => {
+  const plan = buildDeterministicCreateContactPlan(
+    'Create a contact named Casey Cycle CYCLE-123 with email casey.cycle-123@example.com, title VP Operations, at account Cycle Account CYCLE-123.',
+    {
+      intent: 'crm_mutation',
+      entityType: 'contact',
+      domains: ['create'],
+    },
+    new Set(['create_contact']),
+  );
+
+  assert.equal(plan?.provider, 'deterministic');
+  assert.equal(plan?.toolCalls?.[0]?.function?.name, 'create_contact');
+  assert.deepEqual(
+    JSON.parse(plan.toolCalls[0].function.arguments),
+    {
+      name: 'Casey Cycle CYCLE-123',
+      email: 'casey.cycle-123@example.com',
+      company: 'Cycle Account CYCLE-123',
+      title: 'VP Operations',
     },
   );
 });
