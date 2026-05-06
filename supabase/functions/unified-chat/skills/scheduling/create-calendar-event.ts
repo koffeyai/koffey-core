@@ -137,19 +137,17 @@ const createCalendarEvent: SkillDefinition = {
       }
 
       // Refresh token if needed
-      let accessToken = tokenRow.access_token;
-      const expiresAt = tokenRow.expires_at ? new Date(tokenRow.expires_at) : null;
-      if (!expiresAt || expiresAt < new Date()) {
-        const refreshed = await refreshAccessToken(tokenRow.refresh_token);
-        accessToken = refreshed.accessToken;
-        await ctx.supabase
-          .from('google_tokens')
-          .update({
-            access_token: refreshed.accessToken,
-            expires_at: new Date(Date.now() + (refreshed.expiresIn || 3600) * 1000).toISOString(),
-          })
-          .eq('user_id', ctx.userId);
+      const accessToken = await refreshAccessToken(tokenRow.refresh_token);
+      if (!accessToken) {
+        return { success: false, message: 'Google token refresh failed. Reconnect Google Calendar in Settings.' };
       }
+      await ctx.supabase
+        .from('google_tokens')
+        .update({
+          access_token: accessToken,
+          expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+        })
+        .eq('user_id', ctx.userId);
 
       // Create event via Google Calendar API
       const event = {

@@ -1130,8 +1130,16 @@ export type Database = {
           organization_id: string | null
           pending_deal_creation: Json | null
           pending_deal_creation_at: string | null
+          pending_deal_update: Json | null
+          pending_deal_update_at: string | null
+          pending_draft_email: Json | null
+          pending_draft_email_at: string | null
           pending_extraction: Json | null
           pending_extraction_at: string | null
+          pending_schedule_meeting: Json | null
+          pending_schedule_meeting_at: string | null
+          pending_sequence_action: Json | null
+          pending_sequence_action_at: string | null
           search_attempt_count: number | null
           title: string | null
           updated_at: string | null
@@ -1149,8 +1157,16 @@ export type Database = {
           organization_id?: string | null
           pending_deal_creation?: Json | null
           pending_deal_creation_at?: string | null
+          pending_deal_update?: Json | null
+          pending_deal_update_at?: string | null
+          pending_draft_email?: Json | null
+          pending_draft_email_at?: string | null
           pending_extraction?: Json | null
           pending_extraction_at?: string | null
+          pending_schedule_meeting?: Json | null
+          pending_schedule_meeting_at?: string | null
+          pending_sequence_action?: Json | null
+          pending_sequence_action_at?: string | null
           search_attempt_count?: number | null
           title?: string | null
           updated_at?: string | null
@@ -1168,8 +1184,16 @@ export type Database = {
           organization_id?: string | null
           pending_deal_creation?: Json | null
           pending_deal_creation_at?: string | null
+          pending_deal_update?: Json | null
+          pending_deal_update_at?: string | null
+          pending_draft_email?: Json | null
+          pending_draft_email_at?: string | null
           pending_extraction?: Json | null
           pending_extraction_at?: string | null
+          pending_schedule_meeting?: Json | null
+          pending_schedule_meeting_at?: string | null
+          pending_sequence_action?: Json | null
+          pending_sequence_action_at?: string | null
           search_attempt_count?: number | null
           title?: string | null
           updated_at?: string | null
@@ -3521,8 +3545,16 @@ export type Database = {
           organization_id: string
           pending_deal_creation: Json | null
           pending_deal_creation_at: string | null
+          pending_deal_update: Json | null
+          pending_deal_update_at: string | null
+          pending_draft_email: Json | null
+          pending_draft_email_at: string | null
           pending_extraction: Json | null
           pending_extraction_at: string | null
+          pending_schedule_meeting: Json | null
+          pending_schedule_meeting_at: string | null
+          pending_sequence_action: Json | null
+          pending_sequence_action_at: string | null
           session_expires_at: string | null
           updated_at: string | null
           user_id: string
@@ -3541,8 +3573,16 @@ export type Database = {
           organization_id: string
           pending_deal_creation?: Json | null
           pending_deal_creation_at?: string | null
+          pending_deal_update?: Json | null
+          pending_deal_update_at?: string | null
+          pending_draft_email?: Json | null
+          pending_draft_email_at?: string | null
           pending_extraction?: Json | null
           pending_extraction_at?: string | null
+          pending_schedule_meeting?: Json | null
+          pending_schedule_meeting_at?: string | null
+          pending_sequence_action?: Json | null
+          pending_sequence_action_at?: string | null
           session_expires_at?: string | null
           updated_at?: string | null
           user_id: string
@@ -3561,8 +3601,16 @@ export type Database = {
           organization_id?: string
           pending_deal_creation?: Json | null
           pending_deal_creation_at?: string | null
+          pending_deal_update?: Json | null
+          pending_deal_update_at?: string | null
+          pending_draft_email?: Json | null
+          pending_draft_email_at?: string | null
           pending_extraction?: Json | null
           pending_extraction_at?: string | null
+          pending_schedule_meeting?: Json | null
+          pending_schedule_meeting_at?: string | null
+          pending_sequence_action?: Json | null
+          pending_sequence_action_at?: string | null
           session_expires_at?: string | null
           updated_at?: string | null
           user_id?: string

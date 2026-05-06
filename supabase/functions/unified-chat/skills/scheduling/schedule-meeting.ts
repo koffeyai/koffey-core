@@ -171,6 +171,12 @@ IMPORTANT:
     const cleanedContactLastName = String(contact_last_name || '').trim();
     const cleanedContactTitle = String(contact_title || '').trim();
 
+    const cleanScheduleContactName = (value?: string) => String(value || '')
+      .replace(/\s+\bfor\s+(?:the\s+)?(?:[A-Za-z0-9][A-Za-z0-9&.,' -]{1,80}\s+)?(?:deal|opportunit(?:y|ies))\b.*$/i, '')
+      .replace(/\s+\b(?:this|next)\s+(?:week|month)\b.*$/i, '')
+      .replace(/\s+\b(?:in|during)\s+(?:the\s+)?(?:morning|afternoon|evening)\b.*$/i, '')
+      .trim();
+
     const cleanDealName = (value?: string) => String(value || '')
       .replace(/\*\*/g, '')
       .replace(/[\u2013\u2014\u2015]/g, '-')
@@ -181,6 +187,7 @@ IMPORTANT:
       .replace(/\s+-\s+\$[\d,.]+(?:\.\d+)?\s*[kmb]?(?:\s+(?:mrr|arr|acv|usd))?.*$/i, '')
       .replace(/\s+(?:deal|opportunity)$/i, '')
       .trim();
+    const resolvedContactName = cleanScheduleContactName(contact_name);
 
     const inferNameParts = () => {
       const explicitFirst = cleanedContactFirstName;
@@ -189,8 +196,8 @@ IMPORTANT:
         return { firstName: explicitFirst, lastName: explicitLast };
       }
 
-      const nameParts = String(contact_name || '').trim().split(/\s+/).filter(Boolean);
-      if (nameParts.length >= 2 && !String(contact_name).includes('@')) {
+      const nameParts = String(resolvedContactName || '').trim().split(/\s+/).filter(Boolean);
+      if (nameParts.length >= 2 && !String(resolvedContactName).includes('@')) {
         return {
           firstName: explicitFirst || nameParts[0],
           lastName: explicitLast || nameParts.slice(1).join(' '),
@@ -305,7 +312,7 @@ IMPORTANT:
         .eq('id', resolvedDeal.contact_id)
         .maybeSingle();
       contact = data;
-    } else if (!contact_name && resolvedDeal?.id) {
+    } else if (!resolvedContactName && resolvedDeal?.id) {
       const { data: linkedContacts } = await supabase
         .from('deal_contacts')
         .select('role_in_deal, contacts(id, full_name, email, company, account_id)')
@@ -330,7 +337,7 @@ IMPORTANT:
           })),
         };
       }
-    } else if (!contact_name && resolvedDeal?.account_id) {
+    } else if (!resolvedContactName && resolvedDeal?.account_id) {
       const { data: accountContacts } = await supabase
         .from('contacts')
         .select('id, full_name, email, company, account_id')
@@ -352,7 +359,7 @@ IMPORTANT:
           })),
         };
       }
-    } else if (!contact_name) {
+    } else if (!resolvedContactName) {
       return {
         success: false,
         _needsInput: true,
@@ -365,7 +372,7 @@ IMPORTANT:
         .from('contacts')
         .select('id, full_name, email, company, account_id')
         .eq('organization_id', organizationId)
-        .ilike('full_name', `%${contact_name}%`);
+        .ilike('full_name', `%${resolvedContactName}%`);
 
       // Scope to account if account_name provided
       if (account_name) {
@@ -396,7 +403,7 @@ IMPORTANT:
         return {
           success: false,
           _needsInput: true,
-          message: `Multiple contacts match "${contact_name}". Which one did you mean?`,
+          message: `Multiple contacts match "${resolvedContactName}". Which one did you mean?`,
           matches: contacts.map((c: any) => ({
             id: c.id,
             name: c.full_name,
@@ -407,7 +414,7 @@ IMPORTANT:
       }
     }
 
-    if (!contact && (contact_name || cleanedContactFirstName || cleanedContactLastName || validContactEmail)) {
+    if (!contact && (resolvedContactName || cleanedContactFirstName || cleanedContactLastName || validContactEmail)) {
       const { firstName, lastName } = inferNameParts();
       if (!firstName || !lastName || !cleanedContactTitle || !validContactEmail) {
         const missingDetails = buildMissingNewContactDetails();
@@ -416,7 +423,7 @@ IMPORTANT:
           _needsInput: true,
           clarification_type: 'missing_contact_details',
           message: missingDetails.message,
-          contact_name: contact_name || [firstName, lastName].filter(Boolean).join(' ') || null,
+          contact_name: resolvedContactName || [firstName, lastName].filter(Boolean).join(' ') || null,
           contact_email: validContactEmail,
           deal_name: resolvedDeal?.name || deal_name || null,
           missing: missingDetails.missing,
@@ -461,7 +468,7 @@ IMPORTANT:
         _needsInput: true,
         clarification_type: 'missing_contact_details',
         message: missingDetails.message,
-        contact_name,
+        contact_name: resolvedContactName,
         deal_name: resolvedDeal?.name || deal_name || null,
         missing: missingDetails.missing,
       };
@@ -508,6 +515,7 @@ IMPORTANT:
     // ---------------------------------------------------------------
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
 
     const availabilityPayload = {
       userId,
@@ -543,12 +551,17 @@ IMPORTANT:
 
     // Pick the best slot
     const slots = availabilityResult?.slots || availabilityResult?.available_slots || [];
+    const getSlotStart = (slot: any): string | null => {
+      const value = slot?.start || slot?.start_time || slot?.isoStart || slot?.iso_start || null;
+      return value && Number.isFinite(Date.parse(value)) ? value : null;
+    };
     const selectedStart = selected_start_iso && Number.isFinite(Date.parse(selected_start_iso))
       ? selected_start_iso
       : null;
+    const firstSlotWithStart = slots.find((slot: any) => getSlotStart(slot));
     const bestSlot = selectedStart
       ? { start: selectedStart }
-      : (slots.length > 0 ? slots[0] : null);
+      : (firstSlotWithStart || null);
 
     // ---------------------------------------------------------------
     // Step 3: Build meeting preview
@@ -565,7 +578,7 @@ IMPORTANT:
     let suggestedStart: string | null = null;
 
     if (bestSlot) {
-      suggestedStart = bestSlot.start || bestSlot.startTime || bestSlot.start_time;
+      suggestedStart = getSlotStart(bestSlot);
       if (suggestedStart) {
         const dt = new Date(suggestedStart);
         timeDescription = `${dt.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })} at ${dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
@@ -602,8 +615,13 @@ Looking forward to it!`;
           suggested_start_iso: suggestedStart,
           duration_minutes: duration,
           available_slots: slots.slice(0, 3).map((s: any) => {
-            const start = s.start || s.startTime || s.start_time;
-            if (!start) return s;
+            const start = getSlotStart(s);
+            if (!start) {
+              const label = [s.dayLabel || s.date, s.startTime && s.endTime ? `${s.startTime}-${s.endTime}` : s.startTime]
+                .filter(Boolean)
+                .join(' ');
+              return label ? { ...s, label } : s;
+            }
             const dt = new Date(start);
             return {
               start,
@@ -643,14 +661,21 @@ Looking forward to it!`;
         plainBody: draftBody,
         dealId: deal_id || resolvedDeal?.id || undefined,
       };
+      const forwardedAuthHeader = typeof ctx.authHeader === 'string' && /^Bearer\s+\S+/i.test(ctx.authHeader)
+        ? ctx.authHeader
+        : null;
+      const emailHeaders: Record<string, string> = {
+        'Authorization': forwardedAuthHeader || `Bearer ${serviceRoleKey}`,
+        'Content-Type': 'application/json',
+        ...(ctx.traceId ? { 'x-trace-id': ctx.traceId } : {}),
+      };
+      if (forwardedAuthHeader && anonKey) {
+        emailHeaders.apikey = anonKey;
+      }
 
       const emailResp = await fetch(`${supabaseUrl}/functions/v1/send-scheduling-email`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${serviceRoleKey}`,
-          'Content-Type': 'application/json',
-          ...(ctx.traceId ? { 'x-trace-id': ctx.traceId } : {}),
-        },
+        headers: emailHeaders,
         body: JSON.stringify(emailPayload),
       });
 
@@ -679,20 +704,18 @@ Looking forward to it!`;
           if (tokenRow?.refresh_token) {
             const scopes: string[] = tokenRow.scopes || [];
             if (scopes.some((s: string) => s.includes('calendar'))) {
-              let accessToken = tokenRow.access_token;
-              const expiresAt = tokenRow.expires_at ? new Date(tokenRow.expires_at) : null;
-              if (!expiresAt || expiresAt < new Date()) {
-                const { refreshAccessToken } = await import('../../../_shared/google-auth.ts');
-                const refreshed = await refreshAccessToken(tokenRow.refresh_token);
-                accessToken = refreshed.accessToken;
-                await supabase
-                  .from('google_tokens')
-                  .update({
-                    access_token: refreshed.accessToken,
-                    expires_at: new Date(Date.now() + (refreshed.expiresIn || 3600) * 1000).toISOString(),
-                  })
-                  .eq('user_id', userId);
+              const { refreshAccessToken } = await import('../../../_shared/google-auth.ts');
+              const accessToken = await refreshAccessToken(tokenRow.refresh_token);
+              if (!accessToken) {
+                throw new Error('Google token refresh failed');
               }
+              await supabase
+                .from('google_tokens')
+                .update({
+                  access_token: accessToken,
+                  expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+                })
+                .eq('user_id', userId);
 
               const event = {
                 summary: `${meetingTypeLabel} with ${contact.full_name}`,

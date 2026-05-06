@@ -266,6 +266,32 @@ function getCreatePersonalAccountName() {
   return deps?.createPersonalAccountName || defaultCreatePersonalAccountName;
 }
 
+function cleanDealAccountName(value: unknown): string {
+  const original = String(value || '').trim();
+  if (!original) return '';
+
+  const cleaned = original
+    .replace(/^(?:account[_\s-]*name|account|company)\s*:?\s*/i, '')
+    .replace(/\s+\b(?:closing|close\s+date|with\s+primary\s+contact|primary\s+contact|contact\s+is|at\s+(?:prospecting|qualified|proposal|negotiation|closed[_\s-]?won|closed[_\s-]?lost)\s+stage)\b.*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return cleaned || original;
+}
+
+function cleanDealContactName(value: unknown): string {
+  const original = String(value || '').trim();
+  if (!original) return '';
+
+  const cleaned = original
+    .replace(/\s+\bat\s+(?:prospecting|qualified|proposal|negotiation|closed[_\s-]?won|closed[_\s-]?lost)\s+stage\b.*$/i, '')
+    .replace(/\s+\b(?:for|on|regarding)\s+(?:the\s+)?(?:deal|opportunity)\b.*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return cleaned || original;
+}
+
 function triggerEmbedding(entityType: string, entityId: string, orgId: string, content: string) {
   if (deps?.triggerEmbedding) {
     deps.triggerEmbedding(entityType, entityId, orgId, content);
@@ -686,11 +712,13 @@ export async function executeCreateDeal(
   sessionId?: string,
   sessionTable?: 'chat_sessions' | 'messaging_sessions'
 ) {
-  const { account_name, amount, name, stage, probability, contact_name, contact_email, notes, lead_source } = args;
+  const account_name = cleanDealAccountName(args?.account_name);
+  const contact_name = cleanDealContactName(args?.contact_name);
+  const { amount, name, stage, probability, contact_email, notes, lead_source } = args;
   // Resolve fuzzy dates: "end of June" → "2026-06-30", "Q3" → "2026-09-30"
   const close_date = resolveFuzzyDate(args.close_date) || args.close_date || null;
   // Ensure resolved date flows through to _createDealWithAccount
-  args = { ...args, close_date };
+  args = { ...args, account_name, contact_name, close_date };
 
   // Guard: required fields — LLMs sometimes omit them despite schema
   if (!account_name) {

@@ -103,6 +103,19 @@ test('extractCreateDealArgsFromMessage preserves explicitly named opportunities'
   );
 });
 
+test('extractCreateDealArgsFromMessage separates named deal, account, and primary contact', () => {
+  assert.deepEqual(
+    extractCreateDealArgsFromMessage('Create a $75000 deal named Northstar Expansion Smoke for Northstar Robotics Smoke with primary contact Maya Chen and expected close date 2026-06-30.'),
+    {
+      account_name: 'Northstar Robotics Smoke',
+      name: 'Northstar Expansion Smoke',
+      amount: 75000,
+      close_date: '2026-06-30',
+      contact_name: 'Maya Chen',
+    },
+  );
+});
+
 test('extractCreateDealArgsFromMessage keeps contact name when the prompt includes a parenthesized contact email', () => {
   assert.deepEqual(
     extractCreateDealArgsFromMessage('please create an opportunity for acme for $20k MRR closing 2026-05-20 with primary contact Pat Rivera (pat.rivera@example.com)'),
@@ -461,6 +474,66 @@ test('buildDeterministicCreateTaskPlan keeps titled task details and deal linkag
   );
 });
 
+test('buildDeterministicCreateTaskPlan handles task for named opportunity phrasing', () => {
+  const message = 'Create a high priority follow-up task for the Northstar Expansion opportunity due tomorrow to send the security questionnaire to Maya Chen.';
+  const taskPlan = buildDeterministicCreateTaskPlan(
+    message,
+    {
+      intent: 'crm_mutation',
+      entityType: 'task',
+      domains: ['create'],
+    },
+    new Set(['create_task']),
+  );
+  const dealPlan = buildDeterministicCreateDealPlan(
+    message,
+    {
+      intent: 'crm_mutation',
+      entityType: 'task',
+      domains: ['create'],
+    },
+    new Set(['create_deal']),
+  );
+
+  assert.equal(dealPlan, null);
+  assert.equal(taskPlan?.provider, 'deterministic');
+  assert.equal(taskPlan?.toolCalls?.[0]?.function?.name, 'create_task');
+  assert.deepEqual(
+    JSON.parse(taskPlan.toolCalls[0].function.arguments),
+    {
+      title: 'Send the security questionnaire to Maya Chen',
+      due_date: 'tomorrow',
+      deal_name: 'Northstar Expansion',
+      priority: 'high',
+    },
+  );
+});
+
+test('buildDeterministicCreateTaskPlan keeps deal linkage when task action follows trailing opportunity name', () => {
+  const plan = buildDeterministicCreateTaskPlan(
+    'Create a high priority task for the Northstar Expansion Smoke 20260506041223 opportunity to complete the security questionnaire by 2026-05-20.',
+    {
+      intent: 'crm_mutation',
+      entityType: 'task',
+      domains: ['create'],
+    },
+    new Set(['create_task']),
+  );
+
+  assert.equal(plan?.provider, 'deterministic');
+  assert.equal(plan?.model, 'deterministic-create-task');
+  assert.equal(plan?.toolCalls?.[0]?.function?.name, 'create_task');
+  assert.deepEqual(
+    JSON.parse(plan.toolCalls[0].function.arguments),
+    {
+      title: 'Complete the security questionnaire',
+      due_date: '2026-05-20',
+      deal_name: 'Northstar Expansion Smoke 20260506041223',
+      priority: 'high',
+    },
+  );
+});
+
 test('buildDeterministicScheduleMeetingPlan routes compound scheduling asks to schedule_meeting', () => {
   const plan = buildDeterministicScheduleMeetingPlan(
     'Schedule call for acme - $20K. Check my calendar availability and help me send a scheduling email to the contact.',
@@ -504,6 +577,30 @@ test('buildDeterministicScheduleMeetingPlan carries contact email from initial s
       contact_email: 'qa.schedule.person.430@example.com',
       deal_name: 'acme - $20K',
       account_name: 'acme',
+    },
+  );
+});
+
+test('buildDeterministicScheduleMeetingPlan separates contact name from named opportunity context', () => {
+  const plan = buildDeterministicScheduleMeetingPlan(
+    'Schedule a 30 minute call with Maya Chen for the Northstar Expansion opportunity this week in the afternoon about the security questionnaire.',
+    {
+      intent: 'crm_mutation',
+      entityType: 'deal',
+      domains: ['scheduling', 'email'],
+    },
+    new Set(['schedule_meeting']),
+  );
+
+  assert.equal(plan?.toolCalls?.[0]?.function?.name, 'schedule_meeting');
+  assert.deepEqual(
+    JSON.parse(plan.toolCalls[0].function.arguments),
+    {
+      meeting_type: 'call',
+      contact_name: 'Maya Chen',
+      deal_name: 'Northstar Expansion',
+      time_preference: 'afternoon',
+      message_note: 'the security questionnaire',
     },
   );
 });

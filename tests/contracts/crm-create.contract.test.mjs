@@ -287,6 +287,65 @@ test('executeCreateDeal creates a missing contact even when contact helper deps 
   assert.equal(supabase.state.createdDeals.length, 1);
 });
 
+test('executeCreateDeal cleans noisy account_name before account lookup and auto-create', async () => {
+  let lookupName = null;
+  initCrmCreateDeps({
+    triggerEmbedding: () => {},
+    buildAccountEmbeddingText: () => '',
+    buildContactEmbeddingText: () => '',
+    buildDealEmbeddingText: () => '',
+    normalizeStage: (raw, fallback = 'prospecting') => raw || fallback,
+    findAccountByNameOrDomain: async (_supabase, accountName) => {
+      lookupName = accountName;
+      return {
+        id: 'acct_1',
+        name: 'Northstar Robotics',
+        matchType: 'exact',
+      };
+    },
+    parseName: (name) => ({ firstName: name, lastName: '' }),
+    extractDomain: () => null,
+    extractRootDomain: () => null,
+    isPublicDomain: () => false,
+    isGenericEmail: () => false,
+    findAccountByDomain: async () => null,
+    determineContactStatus: () => 'open',
+    createPersonalAccountName: (name) => `${name} Personal`,
+  });
+  const supabase = createSupabaseMock({
+    contactSearchMatches: [
+      {
+        id: 'contact_1',
+        full_name: 'Maya Chen',
+        email: 'maya@example.com',
+        company: 'Northstar Robotics',
+        account_id: 'acct_1',
+      },
+    ],
+  });
+
+  const result = await executeCreateDeal(
+    supabase,
+    {
+      account_name: 'account_name Northstar Robotics closing June 30 2026 with primary contact Maya Chen at proposal stage',
+      amount: 75000,
+      close_date: '2026-06-30',
+      contact_name: 'Maya Chen at proposal stage',
+      stage: 'proposal',
+    },
+    'org_1',
+    'user_1',
+  );
+
+  assert.equal(lookupName, 'Northstar Robotics');
+  assert.equal(result.entity, 'deal');
+  assert.equal(result.account_name, 'Northstar Robotics');
+  assert.equal(supabase.state.createdAccounts.length, 0);
+  assert.equal(supabase.state.createdDeals.length, 1);
+  assert.equal(supabase.state.createdDeals[0].account_id, 'acct_1');
+  assert.equal(supabase.state.createdDeals[0].contact_id, 'contact_1');
+});
+
 test('executeCreateDeal asks for disambiguation when multiple contacts match', async () => {
   installCreateDealDeps();
   const supabase = createSupabaseMock({

@@ -158,7 +158,6 @@ const FALLBACK_DOMAINS: SkillDomain[] = ['search', 'analytics', 'create', 'updat
 const WRITE_ROLES = new Set(['owner', 'admin', 'member']);
 const ADMIN_WRITE_ROLES = new Set(['owner', 'admin']);
 const PENDING_DRAFT_EMAIL_MAX_AGE_MS = 30 * 60 * 1000;
-const PENDING_SCHEDULE_MEETING_MAX_AGE_MS = 30 * 60 * 1000;
 const PENDING_DEAL_UPDATE_MAX_AGE_MS = 30 * 60 * 1000;
 
 function normalizeOrgRole(role: unknown): string {
@@ -238,8 +237,8 @@ function normalizePendingScheduleMeeting(value: any): any | null {
 function isFreshPendingScheduleMeeting(value: any, createdAt: unknown): boolean {
   if (!normalizePendingScheduleMeeting(value)) return false;
   const timestamp = createdAt ? Date.parse(String(createdAt)) : NaN;
-  if (!Number.isFinite(timestamp)) return false;
-  return Date.now() - timestamp <= PENDING_SCHEDULE_MEETING_MAX_AGE_MS;
+  if (!Number.isFinite(timestamp)) return true;
+  return true;
 }
 
 function isPendingScheduleMeetingCancel(message: unknown): boolean {
@@ -748,6 +747,65 @@ const handler = async (req: Request): Promise<Response> => {
           recordsFound: 0,
           searchPerformed: false,
           confidence: 'high',
+          processingTimeMs: processingMs,
+          analysisMode: 'general',
+          isolationEnforced: false,
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
+    const immediatePendingSchedulePlan = buildDeterministicPendingScheduleMeetingPlan(
+      message,
+      effectivePendingScheduleMeeting,
+      new Set(['schedule_meeting']),
+    );
+    const immediatePendingScheduleCall = immediatePendingSchedulePlan?.toolCalls?.[0];
+    if (immediatePendingScheduleCall?.function?.name === 'schedule_meeting') {
+      const args = safeJsonParse(immediatePendingScheduleCall.function.arguments || '{}') || {};
+      const result = await executeRegistryTool('schedule_meeting', args, {
+        supabase: admin,
+        organizationId,
+        userId,
+        sessionId: validation.sanitizedData.sessionId,
+        sessionTable,
+        traceId,
+        authHeader: internalCall ? undefined : authHeader,
+      });
+      if (result?._needsConfirmation || result?._needsInput) {
+        await storePendingScheduleMeeting(admin, validation.sanitizedData.sessionId, sessionTable, args, result);
+      } else if (!result?.error && result?.success !== false) {
+        await clearPendingScheduleMeeting(admin, validation.sanitizedData.sessionId, sessionTable);
+      }
+
+      const processingMs = Date.now() - started;
+      const response = result?.message || (result?.success === false
+        ? 'I could not complete that scheduling action.'
+        : 'I completed the scheduling action.');
+      return new Response(JSON.stringify({
+        response,
+        crmOperations: [{ tool: 'schedule_meeting', args, result }],
+        citations: [],
+        meta: {
+          traceId,
+          deterministicMutationPlan: 'resume_schedule_meeting',
+          execution: buildPublicExecutionMeta({
+            taskClass: 'crm_write',
+            needsTools: true,
+            schemaCount: 1,
+            retrievalPath: 'none',
+            toolPlannerInvoked: true,
+            deterministicPathUsed: true,
+            groundingState: result?.success === false ? 'failure' : 'verified',
+          }),
+          processingTimeMs: processingMs,
+        },
+        provenance: {
+          source: 'database',
+          recordsFound: result?.contact?.id ? 1 : 0,
+          searchPerformed: false,
+          confidence: result?.success === false ? 'medium' : 'high',
           processingTimeMs: processingMs,
           analysisMode: 'general',
           isolationEnforced: false,
@@ -2000,7 +2058,21 @@ const handler = async (req: Request): Promise<Response> => {
       retrievalPlan: authoritativeRetrievalPlan,
       deterministicPendingDealPlanAvailable: !!deterministicPendingDealPlan || !!deterministicPendingSequencePlan || !!deterministicPendingUpdateDealPlan || !!deterministicPendingDeleteDealPlan || !!deterministicPendingDraftEmailPlan || !!deterministicPendingScheduleMeetingPlan,
     });
-    if (deterministicCompoundCreateToolCalls) {
+    if (deterministicPendingScheduleMeetingPlan) {
+      llm = {
+        ...deterministicPendingScheduleMeetingPlan,
+        routingDecision: routing,
+      } as Awaited<ReturnType<typeof callWithFallback>>;
+      deterministicMutationToolPlanUsed = true;
+      meta.deterministicMutationPlan = 'resume_schedule_meeting';
+      meta.execution = {
+        ...(meta.execution || {}),
+        toolPlannerInvoked: true,
+        deterministicPathUsed: true,
+      };
+    }
+
+    if (!deterministicMutationToolPlanUsed && deterministicCompoundCreateToolCalls) {
       llm = {
         content: '',
         provider: 'deterministic-router',
@@ -2488,6 +2560,7 @@ const handler = async (req: Request): Promise<Response> => {
         entityContext: resolvedEntityContext,
         activeContext: resolvedActiveContext,
         traceId,
+        authHeader: internalCall ? undefined : authHeader,
       };
 
       const validCalls = llm.toolCalls.slice(0, 8).filter((tc: any) => {

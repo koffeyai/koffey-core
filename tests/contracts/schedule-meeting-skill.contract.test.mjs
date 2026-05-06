@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import scheduleMeeting from '../../supabase/functions/unified-chat/skills/scheduling/schedule-meeting.ts';
+
+const repoRoot = path.resolve(new URL('../../', import.meta.url).pathname);
 
 function createSupabaseStub() {
   return {
@@ -150,4 +154,73 @@ test('schedule_meeting confirmed flow logs activity without throwing on Supabase
     globalThis.fetch = originalFetch;
     globalThis.Deno = originalDeno;
   }
+});
+
+test('schedule_meeting preview uses ISO availability fields for selectable slots', async () => {
+  const originalDeno = globalThis.Deno;
+  const originalFetch = globalThis.fetch;
+  const isoStart = '2026-05-07T18:00:00.000Z';
+  globalThis.Deno = {
+    env: {
+      get(key) {
+        return {
+          SUPABASE_URL: 'https://example.supabase.co',
+          SUPABASE_SERVICE_ROLE_KEY: 'service-role',
+        }[key];
+      },
+    },
+  };
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('/check-availability')) {
+      return new Response(JSON.stringify({
+        slots: [{
+          date: '2026-05-07',
+          dayLabel: 'Thursday, May 7',
+          startTime: '2:00 PM',
+          endTime: '2:30 PM',
+          isoStart,
+          isoEnd: '2026-05-07T18:30:00.000Z',
+        }],
+      }), { status: 200 });
+    }
+    return new Response('{}', { status: 404 });
+  };
+
+  try {
+    const result = await scheduleMeeting.execute({
+      supabase: createConfirmedSupabaseStub(),
+      organizationId: 'org-1',
+      userId: 'user-1',
+      args: {
+        meeting_type: 'call',
+        contact_id: 'contact-1',
+      },
+      traceId: 'trace-1',
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result._needsConfirmation, true);
+    assert.equal(result.preview.suggested_start_iso, isoStart);
+    assert.equal(result.preview.available_slots[0].start, isoStart);
+    assert.doesNotMatch(result.message, /Invalid Date/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.Deno = originalDeno;
+  }
+});
+
+test('calendar scheduling refresh uses token string returned by shared helper', () => {
+  const scheduleSource = fs.readFileSync(
+    path.join(repoRoot, 'supabase/functions/unified-chat/skills/scheduling/schedule-meeting.ts'),
+    'utf8',
+  );
+  const createEventSource = fs.readFileSync(
+    path.join(repoRoot, 'supabase/functions/unified-chat/skills/scheduling/create-calendar-event.ts'),
+    'utf8',
+  );
+
+  assert.doesNotMatch(scheduleSource, /refreshed\.accessToken/);
+  assert.doesNotMatch(createEventSource, /refreshed\.accessToken/);
+  assert.match(scheduleSource, /const accessToken = await refreshAccessToken/);
+  assert.match(createEventSource, /const accessToken = await refreshAccessToken/);
 });

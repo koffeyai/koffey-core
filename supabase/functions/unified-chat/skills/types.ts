@@ -92,6 +92,7 @@ export interface ToolExecutionContext {
   sessionId?: string;
   sessionTable?: 'chat_sessions' | 'messaging_sessions';
   traceId?: string;
+  authHeader?: string;
 }
 
 // ============================================================================

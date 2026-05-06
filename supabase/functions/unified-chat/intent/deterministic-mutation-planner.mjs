@@ -284,7 +284,7 @@ function extractExplicitCreateDealNameFromMessage(message) {
   const rawMessage = normalizeWhitespace(message);
   if (!rawMessage) return null;
 
-  const explicit = rawMessage.match(/\b(?:create|add|new)\b[\s\S]*?\b(?:deal|opportunit(?:y|ies))\s+(?:named|called)\s+(.+?)(?=\s+(?:for|with)\s+(?:account|company)\b|\s*,|\s+\b(?:amount|stage|close\s+date|closing|primary\s+contact)\b|[.!?]|$)/i);
+  const explicit = rawMessage.match(/\b(?:create|add|new)\b[\s\S]*?\b(?:deal|opportunit(?:y|ies))\s+(?:named|called)\s+(.+?)(?=\s+(?:for|with)\s+(?:the\s+)?(?:account|company)\b|\s+(?:for|with)\s+[A-Za-z0-9][A-Za-z0-9 .&'’-]{1,100}?(?=\s+(?:with\s+)?(?:primary\s+)?contact\b|\s+(?:and\s+)?(?:expected\s+)?close\s+date\b|\s+closing\b|[,;.!?]|$)|\s*,|\s+\b(?:amount|stage|close\s+date|closing|primary\s+contact)\b|[.!?]|$)/i);
   return sanitizeGenericEntityName(explicit?.[1] || '');
 }
 
@@ -293,7 +293,8 @@ function extractExplicitCreateDealAccountNameFromMessage(message) {
   if (!rawMessage) return null;
 
   const explicit = rawMessage.match(/\b(?:for|with)\s+(?:the\s+)?(?:account|company)\s+(.+?)(?=\s*(?:,|;|\s+(?:with\s+)?(?:primary\s+)?contact\b|\s+amount\b|\s+stage\b|\s+(?:close\s+date|closing)\b|[.!?]|$))/i);
-  return sanitizeAccountName(explicit?.[1] || '');
+  const namedDealGeneric = rawMessage.match(/\b(?:deal|opportunit(?:y|ies))\s+(?:named|called)\s+.+?\s+(?:for|with)\s+(.+?)(?=\s*(?:,|;|\s+(?:with\s+)?(?:primary\s+)?contact\b|\s+(?:and\s+)?(?:expected\s+)?close\s+date\b|\s+amount\b|\s+stage\b|\s+closing\b|[.!?]|$))/i);
+  return sanitizeAccountName(explicit?.[1] || namedDealGeneric?.[1] || '');
 }
 
 function sanitizeDraftContext(value) {
@@ -404,9 +405,9 @@ function extractContactNameFromMessage(message, options = {}) {
     if (looksLikeLooseContactName(contact)) return contact;
   }
 
-  const explicit = explicitMessage.match(/\b(?:primary\s+contact(?:\s+name)?|contact(?:\s+name)?)\s*(?:is|=|:)?\s*([A-Za-z][A-Za-z0-9'.-]*(?:\s+[A-Za-z0-9][A-Za-z0-9'.-]*){0,4})\b/i)
+  const explicit = explicitMessage.match(/\b(?:primary\s+contact(?:\s+name)?|contact(?:\s+name)?)\s*(?:is|=|:)?\s*([^,.;\n]+?)(?=\s+\b(?:and|with|closing|close|expected)\b|$)/i)
     || explicitMessage.match(/\b(?:primary\s+contact(?:\s+name)?|contact(?:\s+name)?)\s*(?:is|=|:)\s*([^,.;\n]+)$/i)
-    || explicitMessage.match(/\b(?:primary\s+contact(?:\s+name)?|contact(?:\s+name)?)\s*(?:is|=|:)?\s*([^,.;\n]+?)(?:\s+\b(?:and|with|closing|close|expected)\b|$)/i);
+    || explicitMessage.match(/\b(?:primary\s+contact(?:\s+name)?|contact(?:\s+name)?)\s*(?:is|=|:)?\s*([A-Za-z][A-Za-z0-9'.-]*(?:\s+[A-Za-z0-9][A-Za-z0-9'.-]*){0,4})\b/i);
   if (explicit?.[1]) return sanitizeContactName(explicit[1]);
 
   if (!options.allowImplicit) return null;
@@ -497,7 +498,7 @@ function extractTitleFromTaskMessage(message) {
   const rawMessage = normalizeWhitespace(message);
   if (!rawMessage) return null;
 
-  const toAction = rawMessage.match(/\bto\s+(.+?)(?=\s+(?:for|on|with|at)\s+[^,.;]+(?:[,.!?]|$)|[,.!?]?$)/i);
+  const toAction = rawMessage.match(/\bto\s+(.+?)(?=\s+(?:due|by|today|tomorrow|tonight|next\s+\w+|this\s+\w+|priority)\b|\s+(?:for|on|with|at)\s+[^,.;]+(?:[,.!?]|$)|[,.!?]?$)/i);
   if (toAction?.[1]) {
     const title = sanitizeTaskTitle(toAction[1]);
     if (title) return title;
@@ -538,8 +539,9 @@ function extractDealNameFromTaskMessage(message) {
   const rawMessage = normalizeWhitespace(message);
   if (!rawMessage) return null;
 
-  const explicit = rawMessage.match(/\b(?:for|on|about|regarding)\s+(?:the\s+)?(?:deal|opportunit(?:y|ies))\s+(.+?)(?=\s*(?:,|\s+(?:due|by|priority|today|tomorrow|tonight|next\s+\w+)\b|[.!?]|$))/i);
-  return sanitizeGenericEntityName(explicit?.[1] || '');
+  const explicit = rawMessage.match(/\b(?:for|on|about|regarding)\s+(?:the\s+)?(?:deal|opportunit(?:y|ies))\s+(.+?)(?=\s*(?:,|\s+(?:due|by|priority|today|tomorrow|tonight|next\s+\w+|this\s+\w+|about|regarding|to\s+\w+|in\s+(?:the\s+)?(?:morning|afternoon|evening))\b|[.!?]|$))/i);
+  const trailingEntityType = rawMessage.match(/\b(?:for|on|about|regarding)\s+(?:the\s+)?(.+?)\s+(?:deal|opportunit(?:y|ies))\b(?=\s*(?:,|\s+(?:due|by|priority|today|tomorrow|tonight|next\s+\w+|this\s+\w+|about|regarding|to\s+\w+|in\s+(?:the\s+)?(?:morning|afternoon|evening))\b|[.!?]|$))/i);
+  return sanitizeGenericEntityName(explicit?.[1] || trailingEntityType?.[1] || '');
 }
 
 function extractPriorityFromTaskMessage(message) {
@@ -573,8 +575,8 @@ function extractScheduleTarget(message) {
   const rawMessage = normalizeWhitespace(message);
   if (!rawMessage) return null;
 
-  const explicit = rawMessage.match(/\b(?:schedule|book|set\s+up|arrange)\s+(?:a\s+)?(?:call|meeting|calendar\s+invite|meeting\s+invite|lunch|coffee)\s+(?:for|with)\s+(.+?)(?=\s*(?:[.!?]|,|\bcheck\b|\bhelp\b|\bsend\b|\bdraft\b|\binclude\b|\bmention\b|$))/i)
-    || rawMessage.match(/\b(?:availability|scheduling\s+email)\s+(?:for|with)\s+(.+?)(?=\s*(?:[.!?]|,|\bcheck\b|\bhelp\b|\bsend\b|\bdraft\b|\binclude\b|\bmention\b|$))/i);
+  const explicit = rawMessage.match(/\b(?:schedule|book|set\s+up|arrange)\s+(?:a\s+)?(?:call|meeting|calendar\s+invite|meeting\s+invite|lunch|coffee)\s+(?:for|with)\s+(.+?)(?=\s*(?:[.!?]|,|\bfor\s+(?:the\s+)?(?:[A-Za-z0-9][A-Za-z0-9&.,' -]{1,80}\s+)?(?:deal|opportunit(?:y|ies))\b|\bcheck\b|\bhelp\b|\bsend\b|\bdraft\b|\binclude\b|\bmention\b|$))/i)
+    || rawMessage.match(/\b(?:availability|scheduling\s+email)\s+(?:for|with)\s+(.+?)(?=\s*(?:[.!?]|,|\bfor\s+(?:the\s+)?(?:[A-Za-z0-9][A-Za-z0-9&.,' -]{1,80}\s+)?(?:deal|opportunit(?:y|ies))\b|\bcheck\b|\bhelp\b|\bsend\b|\bdraft\b|\binclude\b|\bmention\b|$))/i);
   return sanitizeGenericEntityName(explicit?.[1] || '');
 }
 
@@ -609,6 +611,10 @@ function extractScheduleArgsFromMessage(message) {
   if (contactName && !/\bcontact\b/i.test(contactName)) {
     args.contact_name = contactName;
   }
+  const dealName = extractDealNameFromTaskMessage(rawMessage);
+  if (dealName) {
+    args.deal_name = dealName;
+  }
   if (contactEmail) {
     args.contact_email = contactEmail;
     const contactDetails = extractPendingContactDetailsFromMessage(rawMessage);
@@ -616,7 +622,7 @@ function extractScheduleArgsFromMessage(message) {
     if (contactDetails.contact_last_name) args.contact_last_name = contactDetails.contact_last_name;
     if (contactDetails.contact_title) args.contact_title = contactDetails.contact_title;
   }
-  if (target && !args.contact_name) {
+  if (target && !args.contact_name && !args.deal_name) {
     const strippedTarget = target.replace(/\s+-\s+\$[\d,.]+(?:\.\d+)?\s*[kmb]?$/i, '').trim();
     // Targets with CRM/deal cues should resolve through the deal/account path.
     if (/[$€£]\s*\d|\b\d+(?:\.\d+)?\s*(?:k|m|b)\b|\bdeal\b|\bopportunit/i.test(target)) {
@@ -629,7 +635,7 @@ function extractScheduleArgsFromMessage(message) {
   }
 
   const accountName = extractScheduleAccountName(scheduleTargetSource);
-  if (accountName && !args.account_name && !/^(call|meeting|lunch|coffee)$/i.test(accountName)) {
+  if (accountName && !args.account_name && !args.deal_name && !/^(call|meeting|lunch|coffee)$/i.test(accountName)) {
     args.account_name = accountName;
   }
 
@@ -650,6 +656,7 @@ function extractAccountNameFromTaskMessage(message) {
   const rawMessage = normalizeWhitespace(message);
   if (!rawMessage) return null;
   if (/\b(?:for|on|about|regarding)\s+(?:the\s+)?(?:deal|opportunit(?:y|ies))\b/i.test(rawMessage)) return null;
+  if (/\b(?:for|on|about|regarding)\s+(?:the\s+)?.+?\s+(?:deal|opportunit(?:y|ies))\b/i.test(rawMessage)) return null;
 
   const explicit = rawMessage.match(/\b(?:for|on|about|regarding)\s+(.+?)(?=\s+(?:due|by|today|tomorrow|tonight|next\s+\w+|to\s+\w+|with\s+(?:email|primary|contact)|because|from\s+\w+)|[,.!?]?$)/i);
   if (explicit?.[1]) return sanitizeAccountIdentifier(explicit[1]);
@@ -664,8 +671,9 @@ function extractContactNameFromTaskMessage(message) {
   const rawMessage = normalizeWhitespace(message);
   if (!rawMessage) return null;
 
-  const withPerson = rawMessage.match(/\b(?:follow\s+up\s+with|meet\s+with)\s+(.+?)(?=\s+for\s+(?:the\s+)?(?:deal|opportunit(?:y|ies)|account|company)\b|\s+(?:at|from|about|regarding|due|by|today|tomorrow|next\b)|[,.!?]?$)/i)
-    || rawMessage.match(/\b(?:call|email)\s+(?!for\b)(.+?)(?=\s+for\s+(?:the\s+)?(?:deal|opportunit(?:y|ies)|account|company)\b|\s+(?:at|from|about|regarding|due|by|today|tomorrow|next\b)|[,.!?]?$)/i);
+  const entityStop = String.raw`\s+for\s+(?:the\s+)?(?:[A-Za-z0-9][A-Za-z0-9&.,' -]{1,80}\s+)?(?:deal|opportunit(?:y|ies)|account|company)\b`;
+  const withPerson = rawMessage.match(new RegExp(String.raw`\b(?:follow\s+up\s+with|meet\s+with)\s+(.+?)(?=${entityStop}|\s+(?:at|from|about|regarding|due|by|today|tomorrow|next\b)|[,.!?]?$)`, 'i'))
+    || rawMessage.match(new RegExp(String.raw`\b(?:call|email)\s+(?:(?:with|to)\s+)?(?!for\b)(.+?)(?=${entityStop}|\s+(?:at|from|about|regarding|due|by|today|tomorrow|next\b)|[,.!?]?$)`, 'i'));
   return withPerson?.[1] ? sanitizeContactName(withPerson[1]) : null;
 }
 
@@ -984,6 +992,7 @@ export function buildDeterministicCreateDealPlan(message, intent, allowedToolNam
   const toolNames = allowedToolNames instanceof Set ? allowedToolNames : new Set(allowedToolNames || []);
   if (!toolNames.has('create_deal')) return null;
   if (CREATE_DEAL_INSTRUCTIONAL_PATTERN.test(String(message || ''))) return null;
+  if (CREATE_TASK_PATTERNS.some((pattern) => pattern.test(String(message || '')))) return null;
 
   const args = extractCreateDealArgsFromMessage(message);
   if (!args) return null;
