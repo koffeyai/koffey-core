@@ -1,7 +1,7 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 
-const SUPABASE_URL = 'https://smoke.supabase.co';
-const AUTH_STORAGE_KEY = 'sb-smoke-auth-token';
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'https://smoke.supabase.co';
+const AUTH_STORAGE_KEY = `sb-${new URL(SUPABASE_URL).hostname.split('.')[0]}-auth-token`;
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const USER_EMAIL = 'founder@example.com';
 
@@ -187,12 +187,12 @@ test('lets an authenticated user finish organization setup and continue to onboa
   let createOrgAuthorization: string | null = null;
 
   await page.addInitScript((session) => {
-    window.localStorage.setItem('sb-smoke-auth-token', JSON.stringify(session));
+    window.localStorage.setItem(session.storageKey, JSON.stringify(session.authSession));
     window.localStorage.setItem(
       'koffey_pending_org_setup',
       JSON.stringify({ orgName: 'Example Co', domain: 'example.com' })
     );
-  }, buildSession());
+  }, { storageKey: AUTH_STORAGE_KEY, authSession: buildSession() });
 
   await mockProfileLookupAsCurrentUser(page);
   await mockGoogleCalendarAsDisconnected(page);
@@ -226,6 +226,6 @@ test('lets an authenticated user finish organization setup and continue to onboa
 
   const pendingOrg = await page.evaluate(() => window.localStorage.getItem('koffey_pending_org_setup'));
   expect(pendingOrg).toBeNull();
-  const authSession = await page.evaluate(() => window.localStorage.getItem('sb-smoke-auth-token'));
+  const authSession = await page.evaluate((storageKey) => window.localStorage.getItem(storageKey), AUTH_STORAGE_KEY);
   expect(authSession).not.toBeNull();
 });

@@ -12,7 +12,7 @@ test.describe('Custom Skills UI', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/login');
     await page.getByLabel('Email').fill(e2eEmail!);
-    await page.getByLabel('Password').fill(e2ePassword!);
+    await page.locator('#signin-password').fill(e2ePassword!);
     await page.getByRole('button', { name: /^Sign In$/ }).click();
     await page.waitForURL('**/app**', { timeout: 60000 });
   });
