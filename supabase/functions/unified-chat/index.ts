@@ -160,6 +160,9 @@ const WRITE_ROLES = new Set(['owner', 'admin', 'member']);
 const ADMIN_WRITE_ROLES = new Set(['owner', 'admin']);
 const PENDING_DRAFT_EMAIL_MAX_AGE_MS = 30 * 60 * 1000;
 const PENDING_DEAL_UPDATE_MAX_AGE_MS = 30 * 60 * 1000;
+const PENDING_SCHEDULE_MEETING_MAX_AGE_MS = 30 * 60 * 1000;
+const CONFIRMATION_PROTECTED_TOOLS = new Set(['schedule_meeting', 'create_calendar_event']);
+const SCHEDULING_CONFIRMATION_PATTERN = /^(?:yes|yep|yeah|confirm|confirmed|send it|send the email|create it|book it|go ahead|proceed|do it|looks good)[\s.!?]*$/i;
 const PENDING_DRAFT_EMAIL_CLARIFICATIONS = new Set([
   'missing_recipient_email',
   'missing_communication_context',
@@ -172,6 +175,77 @@ const PENDING_DRAFT_EMAIL_TYPES = new Set([
   'draft_email_multiple_deals',
   'draft_email_missing_audience_scope',
 ]);
+const CHAT_HISTORY_CONTEXT_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function normalizeHistoryEntry(entry: any): { role: string; content: string } | null {
+  const role = entry?.role === 'assistant' || entry?.message_type === 'assistant'
+    ? 'assistant'
+    : entry?.role === 'user' || entry?.message_type === 'user'
+      ? 'user'
+      : '';
+  const content = String(entry?.content || '').replace(/\s+/g, ' ').trim();
+  if (!role || !content) return null;
+  return { role, content: content.slice(0, 4000) };
+}
+
+function mergeConversationHistory(
+  persistedHistory: Array<{ role: string; content: string }>,
+  providedHistory: Array<{ role: string; content: string }>,
+): Array<{ role: string; content: string }> {
+  const merged: Array<{ role: string; content: string }> = [];
+  const seen = new Set<string>();
+
+  for (const item of [...persistedHistory, ...providedHistory]) {
+    const normalized = normalizeHistoryEntry(item);
+    if (!normalized) continue;
+    const key = `${normalized.role}:${normalized.content}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(normalized);
+  }
+
+  return merged.slice(-80);
+}
+
+async function loadEffectiveConversationHistory(params: {
+  admin: any;
+  sessionId: string | null;
+  sessionTable: 'chat_sessions' | 'messaging_sessions';
+  userId: string;
+  providedHistory: unknown;
+  currentRequestId: string;
+}): Promise<Array<{ role: string; content: string }>> {
+  const providedHistory = Array.isArray(params.providedHistory)
+    ? params.providedHistory.map(normalizeHistoryEntry).filter(Boolean) as Array<{ role: string; content: string }>
+    : [];
+
+  if (!params.sessionId || params.sessionTable !== 'chat_sessions') return providedHistory;
+
+  const cutoffIso = new Date(Date.now() - CHAT_HISTORY_CONTEXT_WINDOW_MS).toISOString();
+  const { data, error } = await params.admin
+    .from('chat_messages')
+    .select('id, message_type, content, created_at')
+    .eq('session_id', params.sessionId)
+    .eq('user_id', params.userId)
+    .gte('created_at', cutoffIso)
+    .order('created_at', { ascending: true })
+    .limit(80);
+
+  if (error) {
+    console.warn(`[unified-chat] Failed to load same-day chat history: ${error.message}`);
+    return providedHistory;
+  }
+
+  const persistedHistory = (Array.isArray(data) ? data : [])
+    .filter((row: any) => !params.currentRequestId || row?.id !== params.currentRequestId)
+    .map((row: any) => normalizeHistoryEntry({
+      role: row?.message_type === 'assistant' ? 'assistant' : 'user',
+      content: row?.content,
+    }))
+    .filter(Boolean) as Array<{ role: string; content: string }>;
+
+  return mergeConversationHistory(persistedHistory, providedHistory);
+}
 
 function normalizeOrgRole(role: unknown): string {
   return String(role || '').trim().toLowerCase();
@@ -235,7 +309,7 @@ function isFreshPendingDealUpdate(value: any, createdAt: unknown): boolean {
 function normalizePendingScheduleMeeting(value: any): any | null {
   if (
     !value ||
-    !['schedule_meeting_confirmation', 'schedule_meeting_missing_contact_email', 'schedule_meeting_missing_contact_details'].includes(value.type)
+    !['schedule_meeting_confirmation', 'calendar_event_confirmation', 'schedule_meeting_missing_contact_email', 'schedule_meeting_missing_contact_details'].includes(value.type)
   ) return null;
   if (!value.args || typeof value.args !== 'object') return null;
   return {
@@ -252,12 +326,16 @@ function normalizePendingScheduleMeeting(value: any): any | null {
 function isFreshPendingScheduleMeeting(value: any, createdAt: unknown): boolean {
   if (!normalizePendingScheduleMeeting(value)) return false;
   const timestamp = createdAt ? Date.parse(String(createdAt)) : NaN;
-  if (!Number.isFinite(timestamp)) return true;
-  return true;
+  if (!Number.isFinite(timestamp)) return false;
+  return Date.now() - timestamp <= PENDING_SCHEDULE_MEETING_MAX_AGE_MS;
 }
 
 function isPendingScheduleMeetingCancel(message: unknown): boolean {
   return /^(?:no|nope|cancel(?:\s+(?:the\s+)?(?:scheduling\s+)?(?:email|draft|message))?|stop|discard|never mind|nevermind)(?:\s+(?:it|this))?[\s.!?]*$/i.test(String(message || '').trim());
+}
+
+function isPendingSchedulingConfirmation(message: unknown): boolean {
+  return SCHEDULING_CONFIRMATION_PATTERN.test(String(message || '').trim());
 }
 
 async function storePendingDraftEmail(
@@ -380,6 +458,13 @@ async function storePendingScheduleMeeting(
       preview: result.preview || null,
       message: String(result.message || '').trim(),
     };
+  } else if (result?._needsConfirmation && result?._confirmationType === 'calendar_event') {
+    pendingWorkflow = {
+      type: 'calendar_event_confirmation',
+      args,
+      preview: result.preview || null,
+      message: String(result.message || '').trim(),
+    };
   } else if (result?._needsInput && result?.clarification_type === 'missing_contact_details') {
     pendingWorkflow = {
       type: 'schedule_meeting_missing_contact_details',
@@ -442,7 +527,15 @@ async function executeRegistryTool(
   if (!argValidation.ok) {
     throw new Error(`INVALID_TOOL_ARGS: ${argValidation.message || argValidation.errors.join('; ')}`);
   }
-  return await skill.execute({ ...ctx, args: argValidation.args });
+  const executionArgs = { ...argValidation.args };
+  if (
+    CONFIRMATION_PROTECTED_TOOLS.has(toolName)
+    && executionArgs.confirmed === true
+    && ctx.confirmedByPendingWorkflow !== true
+  ) {
+    executionArgs.confirmed = false;
+  }
+  return await skill.execute({ ...ctx, args: executionArgs });
 }
 
 const handler = async (req: Request): Promise<Response> => {
@@ -567,6 +660,14 @@ const handler = async (req: Request): Promise<Response> => {
     // Pending extraction confirmation: check if user is confirming/rejecting a previous extraction preview
     const sessionId = validation.sanitizedData.sessionId;
     const sessionTable = resolvedChannel === 'web' ? 'chat_sessions' : 'messaging_sessions';
+    const effectiveConversationHistory = await loadEffectiveConversationHistory({
+      admin,
+      sessionId,
+      sessionTable,
+      userId,
+      providedHistory: conversationHistory,
+      currentRequestId: requestIdempotencyKey,
+    });
     const extractionConfirmation = isExtractionConfirmation(message);
     if (extractionConfirmation && sessionId) {
       if (extractionConfirmation === 'confirm') {
@@ -618,7 +719,7 @@ const handler = async (req: Request): Promise<Response> => {
       console.log('[unified-chat] Extraction pipeline returned null, falling through to LLM');
     }
 
-    const historyText = (conversationHistory || []).slice(-6).map((m: any) => String(m?.content || '')).join(' ').toLowerCase();
+    const historyText = effectiveConversationHistory.slice(-6).map((m: any) => String(m?.content || '')).join(' ').toLowerCase();
     const intentContext = {
       entityContext: resolvedEntityContext,
       activeContext: resolvedActiveContext,
@@ -743,7 +844,7 @@ const handler = async (req: Request): Promise<Response> => {
       groundingState: clarification?.needsClarification ? 'clarification_needed' : null,
       crmOperations: [],
       response: clarification?.message || '',
-      historyEntries: Array.isArray(conversationHistory) ? conversationHistory : [],
+      historyEntries: effectiveConversationHistory,
     });
     const preExecutionQueryAssistSuggestions = preExecutionQueryAssist.enabled
       ? buildQueryAssistSuggestions({
@@ -763,7 +864,7 @@ const handler = async (req: Request): Promise<Response> => {
     const dataOrActionRequest = authoritativeIntent.isDataOrAction;
     const needsToolsBase = dataOrActionRequest || followUpLike || compoundLike;
     const domainsHint = authoritativeIntent.domains;
-    const normalizedHistory = (conversationHistory || []).map((m: any) => ({ role: m.role, content: m.content }));
+    const normalizedHistory = effectiveConversationHistory.map((m: any) => ({ role: m.role, content: m.content }));
     const effectivePendingWorkflow = normalizePendingDraftWorkflow(providedPendingWorkflow)
       || normalizePendingDraftWorkflow(pendingDraftEmailData);
     const effectivePendingScheduleMeeting = normalizePendingScheduleMeeting(pendingScheduleMeetingData);
@@ -798,8 +899,129 @@ const handler = async (req: Request): Promise<Response> => {
       effectivePendingScheduleMeeting,
       new Set(['schedule_meeting']),
     );
+    if (
+      effectivePendingScheduleMeeting?.type === 'calendar_event_confirmation'
+      && isPendingSchedulingConfirmation(message)
+    ) {
+      const permissionError = getToolPermissionError('create_calendar_event', authorizedOrg?.role);
+      if (permissionError) {
+        const processingMs = Date.now() - started;
+        return new Response(JSON.stringify({
+          response: permissionError,
+          crmOperations: [{
+            tool: 'create_calendar_event',
+            args: effectivePendingScheduleMeeting.args || {},
+            result: { error: true, permissionDenied: true, message: permissionError },
+          }],
+          citations: [],
+          meta: {
+            traceId,
+            deterministicMutationPlan: 'resume_calendar_event',
+            processingTimeMs: processingMs,
+          },
+          provenance: {
+            source: 'general_chat',
+            recordsFound: 0,
+            searchPerformed: false,
+            confidence: 'high',
+            processingTimeMs: processingMs,
+            analysisMode: 'general',
+            isolationEnforced: false,
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+
+      const args = {
+        ...(effectivePendingScheduleMeeting.args || {}),
+        confirmed: true,
+      };
+      const result = await executeRegistryTool('create_calendar_event', args, {
+        supabase: admin,
+        organizationId,
+        userId,
+        sessionId: validation.sanitizedData.sessionId,
+        sessionTable,
+        traceId,
+        authHeader: internalCall ? undefined : authHeader,
+        confirmedByPendingWorkflow: true,
+      });
+      if (result?._needsConfirmation || result?._needsInput) {
+        await storePendingScheduleMeeting(admin, validation.sanitizedData.sessionId, sessionTable, args, result);
+      } else if (!result?.error && result?.success !== false) {
+        await clearPendingScheduleMeeting(admin, validation.sanitizedData.sessionId, sessionTable);
+      }
+
+      const processingMs = Date.now() - started;
+      const response = result?.message || (result?.success === false
+        ? 'I could not complete that calendar action.'
+        : 'I completed the calendar action.');
+      return new Response(JSON.stringify({
+        response,
+        crmOperations: [{ tool: 'create_calendar_event', args, result }],
+        citations: [],
+        meta: {
+          traceId,
+          deterministicMutationPlan: 'resume_calendar_event',
+          execution: buildPublicExecutionMeta({
+            taskClass: 'crm_write',
+            needsTools: true,
+            schemaCount: 1,
+            retrievalPath: 'none',
+            toolPlannerInvoked: true,
+            deterministicPathUsed: true,
+            groundingState: result?.success === false ? 'failure' : 'verified',
+          }),
+          processingTimeMs: processingMs,
+        },
+        provenance: {
+          source: 'general_chat',
+          recordsFound: 0,
+          searchPerformed: false,
+          confidence: result?.success === false ? 'low' : 'high',
+          processingTimeMs: processingMs,
+          analysisMode: 'general',
+          isolationEnforced: false,
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
     const immediatePendingScheduleCall = immediatePendingSchedulePlan?.toolCalls?.[0];
     if (immediatePendingScheduleCall?.function?.name === 'schedule_meeting') {
+      const permissionError = getToolPermissionError('schedule_meeting', authorizedOrg?.role);
+      if (permissionError) {
+        const processingMs = Date.now() - started;
+        return new Response(JSON.stringify({
+          response: permissionError,
+          crmOperations: [{
+            tool: 'schedule_meeting',
+            args: safeJsonParse(immediatePendingScheduleCall.function.arguments || '{}') || {},
+            result: { error: true, permissionDenied: true, message: permissionError },
+          }],
+          citations: [],
+          meta: {
+            traceId,
+            deterministicMutationPlan: 'resume_schedule_meeting',
+            processingTimeMs: processingMs,
+          },
+          provenance: {
+            source: 'general_chat',
+            recordsFound: 0,
+            searchPerformed: false,
+            confidence: 'high',
+            processingTimeMs: processingMs,
+            analysisMode: 'general',
+            isolationEnforced: false,
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
       const args = safeJsonParse(immediatePendingScheduleCall.function.arguments || '{}') || {};
       const result = await executeRegistryTool('schedule_meeting', args, {
         supabase: admin,
@@ -809,6 +1031,7 @@ const handler = async (req: Request): Promise<Response> => {
         sessionTable,
         traceId,
         authHeader: internalCall ? undefined : authHeader,
+        confirmedByPendingWorkflow: true,
       });
       if (result?._needsConfirmation || result?._needsInput) {
         await storePendingScheduleMeeting(admin, validation.sanitizedData.sessionId, sessionTable, args, result);
@@ -1131,7 +1354,7 @@ const handler = async (req: Request): Promise<Response> => {
         groundingState: scoutpadGroundingState,
         crmOperations: scoutpadOperations,
         response: responseText,
-        historyEntries: Array.isArray(conversationHistory) ? conversationHistory : [],
+        historyEntries: effectiveConversationHistory,
       });
       const scoutpadQueryAssistSuggestions = scoutpadQueryAssist.enabled
         ? buildQueryAssistSuggestions({
@@ -1371,7 +1594,7 @@ const handler = async (req: Request): Promise<Response> => {
           groundingState: analyticsGroundingState,
           crmOperations: analyticsOperations,
           response: verifiedAnalyticsResponse,
-          historyEntries: Array.isArray(conversationHistory) ? conversationHistory : [],
+          historyEntries: effectiveConversationHistory,
         });
         const analyticsQueryAssistSuggestions = analyticsQueryAssist.enabled
           ? buildQueryAssistSuggestions({
@@ -1569,7 +1792,7 @@ const handler = async (req: Request): Promise<Response> => {
           groundingState: pipelineGroundingState,
           crmOperations: pipelineOperations,
           response: verifiedPipelineResponse,
-          historyEntries: Array.isArray(conversationHistory) ? conversationHistory : [],
+          historyEntries: effectiveConversationHistory,
         });
         const pipelineQueryAssistSuggestions = pipelineQueryAssist.enabled
           ? buildQueryAssistSuggestions({
@@ -2812,15 +3035,22 @@ const handler = async (req: Request): Promise<Response> => {
           tool === 'draft_email' && result?.isDraft && !result?.error
         ));
         const pendingScheduleMeetingOp = crmOperations.find(({ tool, result }) => (
-          tool === 'schedule_meeting'
-          && (
-            (result?._needsConfirmation && result?._confirmationType === 'schedule_meeting')
-            || (result?._needsInput && result?.clarification_type === 'missing_contact_email')
-            || (result?._needsInput && result?.clarification_type === 'missing_contact_details')
+          (
+            tool === 'schedule_meeting'
+            && (
+              (result?._needsConfirmation && result?._confirmationType === 'schedule_meeting')
+              || (result?._needsInput && result?.clarification_type === 'missing_contact_email')
+              || (result?._needsInput && result?.clarification_type === 'missing_contact_details')
+            )
+          )
+          || (
+            tool === 'create_calendar_event'
+            && result?._needsConfirmation
+            && result?._confirmationType === 'calendar_event'
           )
         ));
         const completedScheduleMeetingOp = crmOperations.find(({ tool, result }) => (
-          tool === 'schedule_meeting'
+          (tool === 'schedule_meeting' || tool === 'create_calendar_event')
           && !result?._needsConfirmation
           && !result?.error
           && result?.success !== false
@@ -2874,6 +3104,14 @@ const handler = async (req: Request): Promise<Response> => {
           const preview = pendingScheduleMeetingOp.result?.preview || {};
           const contactName = preview.contact?.name || 'the selected contact';
           response = `Review this scheduling plan for ${contactName}. I found availability and prepared the email, but I will not send anything until you confirm.`;
+        } else if (
+          pendingScheduleMeetingOp
+          && pendingScheduleMeetingOp.result?._needsConfirmation
+          && pendingScheduleMeetingOp.result?._confirmationType === 'calendar_event'
+        ) {
+          const preview = pendingScheduleMeetingOp.result?.preview || {};
+          const title = preview.title || pendingScheduleMeetingOp.args?.title || 'this calendar event';
+          response = `Review ${title}. I will not create the calendar event or send invites until you confirm.`;
         } else if (hasIncompleteToolResult) {
           response = buildToolOnlyResponse(crmOperations as any, message);
         } else if (!synthEnabled) {
@@ -2987,7 +3225,7 @@ const handler = async (req: Request): Promise<Response> => {
         groundingState: forcedGroundingState,
         crmOperations,
         response,
-        historyEntries: Array.isArray(conversationHistory) ? conversationHistory : [],
+        historyEntries: effectiveConversationHistory,
       });
       const postExecutionQueryAssistSuggestions = postExecutionQueryAssist.enabled
         ? buildQueryAssistSuggestions({

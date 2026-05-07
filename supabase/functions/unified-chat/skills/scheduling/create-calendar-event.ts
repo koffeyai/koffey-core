@@ -71,7 +71,16 @@ const createCalendarEvent: SkillDefinition = {
   - Do NOT use create_activity for meeting requests — ALWAYS use create_calendar_event`,
 
   execute: async (ctx: ToolExecutionContext) => {
-    const { title, contact_name, attendee_emails, start_time, duration_minutes, description, confirmed } = ctx.args;
+    const {
+      title,
+      contact_name,
+      attendee_emails,
+      start_time,
+      duration_minutes,
+      description,
+      confirmed: rawConfirmed,
+    } = ctx.args;
+    const confirmed = rawConfirmed === true && ctx.confirmedByPendingWorkflow === true;
 
     // Resolve contact email
     let attendees: Array<{ email: string; displayName?: string }> = [];

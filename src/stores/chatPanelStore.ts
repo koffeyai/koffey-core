@@ -28,9 +28,6 @@ export const useChatPanelStore = create<ChatPanelStore>((set) => ({
       ? `${Date.now()}-${Math.random().toString(36).slice(2)}`
       : null,
     pageContext: context || null,
-    // Clear active session when opening with a new message so useChat starts fresh
-    // instead of restoring the previous conversation
-    ...(message ? { activeSessionId: null } : {}),
   }),
   
   closePanel: () => set({ 

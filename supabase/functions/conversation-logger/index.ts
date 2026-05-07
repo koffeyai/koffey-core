@@ -589,6 +589,18 @@ try {
       }
     }
 
+    if ((userMessage || aiResponse) && sessionId) {
+      const { error: touchError } = await supabase
+        .from('chat_sessions')
+        .update({ updated_at: new Date().toISOString(), is_active: true })
+        .eq('id', sessionId)
+        .eq('user_id', userId);
+
+      if (touchError) {
+        console.warn('⚠️ Failed to update chat session activity:', touchError.message);
+      }
+    }
+
     return new Response(
       JSON.stringify({ success: errors.length === 0, sessionId, errors: errors.length > 0 ? errors : undefined }),
       { status: errors.length > 0 ? 207 : 200, headers: { "Content-Type": "application/json", ...corsHeaders } }

@@ -11,6 +11,13 @@ import { useActiveViewRoleStore } from '@/stores/activeViewRoleStore';
 import { useEntityContext } from './useEntityContext';
 import { buildDashboardManagerFollowUp, buildVisualArtifactPrompts, isVisualAnalyticsRequest, summarizeVisualArtifacts } from '@/lib/visualAnalytics';
 import { crmEventBus } from '@/lib/crmEventBus';
+import {
+  CHAT_CONTEXT_WINDOW_MS,
+  clearStoredActiveChatSession,
+  isChatSessionWithinMemoryWindow,
+  readStoredActiveChatSession,
+  writeStoredActiveChatSession,
+} from '@/lib/chatSessionMemory';
 import type { ArtifactPayload, GenerateArtifactResponse } from '@/types/analytics';
 import type { EntityContextMetadata } from '@/types/entityContext';
 import { sanitizeAssistantMessage } from '@/utils/messageSanitizer';
@@ -700,6 +707,44 @@ export const useChat = () => {
     return title.length > 50 ? title.slice(0, 47) + '...' : title;
   };
 
+  const rememberActiveSession = useCallback((sessionId: string | null) => {
+    setActiveSession(sessionId);
+    if (!user?.id || !organizationId) return;
+    if (sessionId) {
+      writeStoredActiveChatSession(user.id, organizationId, sessionId);
+    } else {
+      clearStoredActiveChatSession(user.id, organizationId);
+    }
+  }, [organizationId, setActiveSession, user?.id]);
+
+  const restoreActiveSession = useCallback(async (): Promise<ChatSession | null> => {
+    if (!user?.id || !organizationId) return null;
+
+    const storedSessionId = activeSessionId || readStoredActiveChatSession(user.id, organizationId);
+    if (!storedSessionId) return null;
+
+    const cutoffIso = new Date(Date.now() - CHAT_CONTEXT_WINDOW_MS).toISOString();
+    const { data: session } = await supabase
+      .from('chat_sessions')
+      .select('*')
+      .eq('id', storedSessionId)
+      .eq('organization_id', organizationId)
+      .eq('user_id', user.id)
+      .gte('updated_at', cutoffIso)
+      .maybeSingle();
+
+    if (session && isChatSessionWithinMemoryWindow(session.updated_at || session.created_at)) {
+      setCurrentSession(session);
+      currentSessionIdRef.current = session.id;
+      rememberActiveSession(session.id);
+      await loadSessionMessages(session.id);
+      return session;
+    }
+
+    rememberActiveSession(null);
+    return null;
+  }, [activeSessionId, loadSessionMessages, organizationId, rememberActiveSession, user?.id]);
+
   // Create new session
   const createSession = useCallback(async (firstMessage: string) => {
     if (!user || !organizationId) return null;
@@ -718,6 +763,8 @@ export const useChat = () => {
       if (error) throw error;
 
       setCurrentSession(session);
+      currentSessionIdRef.current = session.id;
+      rememberActiveSession(session.id);
       setSessions(prev => [session, ...prev]);
 
       return session;
@@ -726,7 +773,7 @@ export const useChat = () => {
       setError(err.message);
       return null;
     }
-  }, [user, organizationId]);
+  }, [user, organizationId, rememberActiveSession]);
 
   // Track consecutive errors for cascade detection
   const consecutiveErrorsRef = useRef(0);
@@ -1057,6 +1104,9 @@ export const useChat = () => {
     // Create session if none exists
     let session = currentSession;
     if (!session) {
+      session = await restoreActiveSession();
+    }
+    if (!session) {
       session = await createSession(content);
       if (!session) {
         addMessage('Failed to create chat session. Please try again.', 'assistant', false, { isError: true, failedUserMessage: content });
@@ -1068,6 +1118,11 @@ export const useChat = () => {
         }
         return;
       }
+      setMessages(prev => prev.map(m => (
+        m.id === userMessageId ? { ...m, session_id: session!.id } : m
+      )));
+    } else {
+      rememberActiveSession(session.id);
     }
 
     // PERSIST user message to DB IMMEDIATELY — prevents loss if user navigates during AI processing
@@ -1263,7 +1318,7 @@ export const useChat = () => {
       console.log('📤 [useChat] Unified chat response received');
 
       // If user started a new chat while processing, discard stale response
-      if (currentSessionIdRef.current !== session.id) {
+      if (currentSessionIdRef.current && currentSessionIdRef.current !== session.id) {
         console.log('⚠️ [useChat] Session changed during processing — discarding stale response');
         return;
       }
@@ -1593,7 +1648,7 @@ export const useChat = () => {
           };
           await supabase.functions.invoke('conversation-logger', {
             body: {
-              aiResponse: response,
+              aiResponse: responseWithFollowUp,
               aiMessageId,
               sessionId: session.id,
               userId: user.id,
@@ -1635,7 +1690,7 @@ export const useChat = () => {
         }, 100);
       }
     }
-  }, [user, organizationId, currentSession, createSession, addMessage, removeMessage, orgLoading, openSelector, messages, acquireProcessingLock, releaseProcessingLock, clearPrimaryEntity, extractDealLinksFromResponse, extractAccountLinksFromResponse, extractRecordActionsFromResponse, hasMutationOperation, inferChangedEntityTypesFromOperations, extractFollowUpPromptsFromOperations]);
+  }, [user, organizationId, currentSession, createSession, addMessage, removeMessage, orgLoading, openSelector, messages, acquireProcessingLock, releaseProcessingLock, clearPrimaryEntity, rememberActiveSession, restoreActiveSession, extractDealLinksFromResponse, extractAccountLinksFromResponse, extractRecordActionsFromResponse, hasMutationOperation, inferChangedEntityTypesFromOperations, extractFollowUpPromptsFromOperations]);
 
   const sendEmailDraft = useCallback(async (draft: EmailDraftPayload): Promise<boolean> => {
     if (!draft?.to_email || !draft.subject) {
@@ -1666,11 +1721,16 @@ export const useChat = () => {
 
     try {
       if (!session) {
+        session = await restoreActiveSession();
+      }
+      if (!session) {
         session = await createSession(userContent);
         if (!session) {
           addMessage("I couldn't start the chat session for this send. Please try again.", 'assistant', false, { isError: true });
           return false;
         }
+      } else {
+        rememberActiveSession(session.id);
       }
 
       const userMessageId = crypto.randomUUID();
@@ -1759,7 +1819,7 @@ export const useChat = () => {
     } finally {
       releaseProcessingLock();
     }
-  }, [user?.id, organizationId, currentSession, createSession, addMessage, removeMessage, openSelector, acquireProcessingLock, releaseProcessingLock]);
+  }, [user?.id, organizationId, currentSession, createSession, addMessage, removeMessage, openSelector, acquireProcessingLock, releaseProcessingLock, rememberActiveSession, restoreActiveSession]);
 
   // Stop current message generation
   const stopGeneration = useCallback(() => {
@@ -1783,7 +1843,7 @@ export const useChat = () => {
     consecutiveErrorsRef.current = 0;
 
     setCurrentSession(null);
-    setActiveSession(null); // Clear persisted session
+    rememberActiveSession(null);
     pendingDraftEmailRef.current = null;
     setMessages([
       {
@@ -1795,15 +1855,17 @@ export const useChat = () => {
     ]);
     // Clear entity context on new session (now handled by hook)
     clearEntityContext();
-  }, [setActiveSession, clearEntityContext, releaseProcessingLock]);
+  }, [clearEntityContext, releaseProcessingLock, rememberActiveSession]);
 
   // Switch to existing session
   const switchToSession = useCallback(async (session: ChatSession) => {
     setCurrentSession(session);
+    currentSessionIdRef.current = session.id;
+    rememberActiveSession(session.id);
     setMessages([]);
     // Entity context will auto-load from DB via useEntityContext hook
     await loadSessionMessages(session.id);
-  }, [loadSessionMessages]);
+  }, [loadSessionMessages, rememberActiveSession]);
 
   // Delete session
   const deleteSession = useCallback(async (sessionId: string) => {
@@ -1856,38 +1918,28 @@ export const useChat = () => {
     }
   }, [user, organizationId, loadSessions]);
 
-  // Restore active session on mount (prevents losing chat on navigation)
+  // Restore active session on mount (prevents losing same-day chat on navigation/reload)
   useEffect(() => {
-    if (!user || !organizationId || !activeSessionId || currentSession || sessionRestoredRef.current) return;
+    if (!user || !organizationId || currentSession || sessionRestoredRef.current) return;
     
     const restoreSession = async () => {
       sessionRestoredRef.current = true;
       try {
-        const { data: session } = await supabase
-          .from('chat_sessions')
-          .select('*')
-          .eq('id', activeSessionId)
-          .eq('organization_id', organizationId)
-          .single();
-        
-        if (session) {
-          setCurrentSession(session);
-          await loadSessionMessages(session.id);
-        }
+        await restoreActiveSession();
       } catch (err) {
         console.error('Failed to restore session:', err);
       }
     };
     
     restoreSession();
-  }, [user, organizationId, activeSessionId, currentSession, loadSessionMessages]);
+  }, [user, organizationId, currentSession, restoreActiveSession]);
 
   // Persist active session ID when it changes
   useEffect(() => {
     if (currentSession?.id) {
-      setActiveSession(currentSession.id);
+      rememberActiveSession(currentSession.id);
     }
-  }, [currentSession?.id, setActiveSession]);
+  }, [currentSession?.id, rememberActiveSession]);
 
   // Send deferred message when org becomes available
   useEffect(() => {

@@ -93,6 +93,7 @@ export interface ToolExecutionContext {
   sessionTable?: 'chat_sessions' | 'messaging_sessions';
   traceId?: string;
   authHeader?: string;
+  confirmedByPendingWorkflow?: boolean;
 }
 
 // ============================================================================

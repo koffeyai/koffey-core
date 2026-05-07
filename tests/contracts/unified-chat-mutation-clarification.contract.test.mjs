@@ -36,8 +36,12 @@ test('unified chat pending schedule confirmations have schema support', () => {
 
   assert.match(source, /pending_schedule_meeting, pending_schedule_meeting_at/);
   assert.match(source, /function isFreshPendingScheduleMeeting/);
-  assert.match(source, /if \(!Number\.isFinite\(timestamp\)\) return true/);
+  assert.match(source, /PENDING_SCHEDULE_MEETING_MAX_AGE_MS/);
+  assert.match(source, /if \(!Number\.isFinite\(timestamp\)\) return false/);
   assert.match(source, /storePendingScheduleMeeting/);
+  assert.match(source, /calendar_event_confirmation/);
+  assert.match(source, /tool === 'create_calendar_event'[\s\S]*_confirmationType === 'calendar_event'/);
+  assert.match(source, /confirmedByPendingWorkflow/);
   assert.match(source, /buildDeterministicPendingScheduleMeetingPlan/);
   assert.match(source, /const immediatePendingSchedulePlan = buildDeterministicPendingScheduleMeetingPlan/);
   assert.match(source, /executeRegistryTool\('schedule_meeting', args/);

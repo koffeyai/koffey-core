@@ -138,7 +138,7 @@ IMPORTANT:
       message_note,
       deal_id,
       contact_id,
-      confirmed,
+      confirmed: rawConfirmed,
       selected_start_iso,
     } = args as {
       contact_name?: string;
@@ -157,6 +157,7 @@ IMPORTANT:
       confirmed?: boolean;
       selected_start_iso?: string;
     };
+    const confirmed = rawConfirmed === true && ctx.confirmedByPendingWorkflow === true;
 
     // ---------------------------------------------------------------
     // Step 1: Resolve contact

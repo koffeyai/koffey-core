@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import scheduleMeeting from '../../supabase/functions/unified-chat/skills/scheduling/schedule-meeting.ts';
+import createCalendarEvent from '../../supabase/functions/unified-chat/skills/scheduling/create-calendar-event.ts';
 
 const repoRoot = path.resolve(new URL('../../', import.meta.url).pathname);
 
@@ -142,6 +143,7 @@ test('schedule_meeting confirmed flow logs activity without throwing on Supabase
         contact_id: 'contact-1',
         confirmed: true,
       },
+      confirmedByPendingWorkflow: true,
       traceId: 'trace-1',
     });
 
@@ -153,6 +155,96 @@ test('schedule_meeting confirmed flow logs activity without throwing on Supabase
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.Deno = originalDeno;
+  }
+});
+
+test('schedule_meeting ignores untrusted confirmed flag without a pending confirmation workflow', async () => {
+  const originalDeno = globalThis.Deno;
+  const originalFetch = globalThis.fetch;
+  let emailSendCalls = 0;
+  let calendarWriteCalls = 0;
+  globalThis.Deno = {
+    env: {
+      get(key) {
+        return {
+          SUPABASE_URL: 'https://example.supabase.co',
+          SUPABASE_SERVICE_ROLE_KEY: 'service-role',
+        }[key];
+      },
+    },
+  };
+  globalThis.fetch = async (url) => {
+    const href = String(url);
+    if (href.includes('/check-availability')) {
+      return new Response(JSON.stringify({ slots: [] }), { status: 200 });
+    }
+    if (href.includes('/send-scheduling-email')) {
+      emailSendCalls += 1;
+      return new Response(JSON.stringify({ success: true }), { status: 200 });
+    }
+    if (href.includes('googleapis.com/calendar')) {
+      calendarWriteCalls += 1;
+      return new Response(JSON.stringify({ id: 'event-1' }), { status: 200 });
+    }
+    return new Response('{}', { status: 404 });
+  };
+
+  try {
+    const result = await scheduleMeeting.execute({
+      supabase: createConfirmedSupabaseStub(),
+      organizationId: 'org-1',
+      userId: 'user-1',
+      args: {
+        meeting_type: 'call',
+        contact_id: 'contact-1',
+        confirmed: true,
+      },
+      traceId: 'trace-1',
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result._needsConfirmation, true);
+    assert.equal(result._confirmationType, 'schedule_meeting');
+    assert.equal(emailSendCalls, 0);
+    assert.equal(calendarWriteCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.Deno = originalDeno;
+  }
+});
+
+test('create_calendar_event ignores untrusted confirmed flag without a pending confirmation workflow', async () => {
+  const originalFetch = globalThis.fetch;
+  let calendarWriteCalls = 0;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('googleapis.com/calendar')) {
+      calendarWriteCalls += 1;
+      return new Response(JSON.stringify({ id: 'event-1' }), { status: 200 });
+    }
+    return new Response('{}', { status: 404 });
+  };
+
+  try {
+    const result = await createCalendarEvent.execute({
+      supabase: createSupabaseStub(),
+      organizationId: 'org-1',
+      userId: 'user-1',
+      args: {
+        title: 'Calendar Preview Hold',
+        attendee_emails: ['calendar.preview@example.com'],
+        start_time: '2026-05-07T13:00:00.000Z',
+        duration_minutes: 30,
+        confirmed: true,
+      },
+      traceId: 'trace-1',
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result._needsConfirmation, true);
+    assert.equal(result._confirmationType, 'calendar_event');
+    assert.equal(calendarWriteCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 
