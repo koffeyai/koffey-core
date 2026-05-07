@@ -958,6 +958,46 @@ function companyNamesMatch(left: string | null | undefined, right: string | null
   return a === b || a.includes(b) || b.includes(a);
 }
 
+function buildDuplicateContactUpdatePayload(existing: any, requested: {
+  name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  company?: string | null;
+  title?: string | null;
+}) {
+  const updates: Record<string, string> = {};
+  const { firstName, lastName } = getParseName()(requested.name || '');
+  const requestedFullName = [firstName, lastName].filter(Boolean).join(' ').trim();
+  const existingFullName = String(existing?.full_name || '').trim();
+
+  if (requestedFullName && requestedFullName.toLowerCase() !== existingFullName.toLowerCase()) {
+    if (firstName) updates.first_name = firstName;
+    if (lastName) updates.last_name = lastName;
+  }
+
+  for (const field of ['email', 'phone', 'company', 'title'] as const) {
+    const value = String(requested[field] || '').trim();
+    if (value && value.toLowerCase() !== String(existing?.[field] || '').trim().toLowerCase()) {
+      updates[field] = value;
+    }
+  }
+
+  return updates;
+}
+
+async function storeDuplicateContactUpdate(
+  supabase: any,
+  sessionId: string | undefined,
+  sessionTable: 'chat_sessions' | 'messaging_sessions' | undefined,
+  pending: any,
+) {
+  if (!sessionId || !sessionTable) return;
+  await storePendingContactCreation(supabase, sessionId, sessionTable, {
+    type: 'duplicate_contact_update',
+    ...pending,
+  });
+}
+
 async function storePendingContactCreation(
   supabase: any,
   sessionId: string,
@@ -969,6 +1009,8 @@ async function storePendingContactCreation(
     .update({
       pending_contact_creation: pending,
       pending_contact_creation_at: new Date().toISOString(),
+      pending_draft_email: null,
+      pending_draft_email_at: null,
     })
     .eq('id', sessionId);
 
@@ -1070,11 +1112,32 @@ export async function executeCreateContact(
       .ilike('email', email)
       .limit(1);
     if (existingByEmail && existingByEmail.length > 0) {
+      const existing = existingByEmail[0];
+      const updates = buildDuplicateContactUpdatePayload(existing, { name, email, phone, company, title });
+      const hasUpdates = Object.keys(updates).length > 0;
+      if (hasUpdates) {
+        await storeDuplicateContactUpdate(supabase, sessionId, sessionTable, {
+          existing_contact_id: existing.id,
+          existing_contact_name: existing.full_name,
+          requested_name: name,
+          requested_email: email,
+          updates,
+        });
+      }
       return {
         entity: 'contact',
         duplicate: true,
-        existing: existingByEmail[0],
-        message: `A contact with email ${email} already exists: ${existingByEmail[0].full_name}. Would you like to update them instead?`
+        existing,
+        _needsConfirmation: hasUpdates,
+        _confirmationType: hasUpdates ? 'duplicate_contact_update' : undefined,
+        _needsInput: !hasUpdates,
+        clarification_type: !hasUpdates ? 'duplicate_contact_no_changes' : undefined,
+        pending_contact_update: hasUpdates
+          ? { contact_id: existing.id, updates }
+          : undefined,
+        message: hasUpdates
+          ? `A contact with email ${email} already exists: ${existing.full_name}. Reply "yes" to update this contact with the details you provided, or tell me what to change.`
+          : `A contact with email ${email} already exists: ${existing.full_name}. What would you like to update?`,
       };
     }
   }
@@ -1144,20 +1207,60 @@ export async function executeCreateContact(
   });
 
   if (exactCompanyNameMatch) {
+    const updates = buildDuplicateContactUpdatePayload(exactCompanyNameMatch, { name, email, phone, company, title });
+    const hasUpdates = Object.keys(updates).length > 0;
+    if (hasUpdates) {
+      await storeDuplicateContactUpdate(supabase, sessionId, sessionTable, {
+        existing_contact_id: exactCompanyNameMatch.id,
+        existing_contact_name: exactCompanyNameMatch.full_name,
+        requested_name: name,
+        requested_email: email,
+        updates,
+      });
+    }
     return {
       entity: 'contact',
       duplicate: true,
       existing: exactCompanyNameMatch,
-      message: `A contact named "${exactCompanyNameMatch.full_name}" already exists${exactCompanyNameMatch.email ? ` (${exactCompanyNameMatch.email})` : ''}${requestedCompanyName ? ` at ${requestedCompanyName}` : ''}. Would you like to update them instead?`,
+      _needsConfirmation: hasUpdates,
+      _confirmationType: hasUpdates ? 'duplicate_contact_update' : undefined,
+      _needsInput: !hasUpdates,
+      clarification_type: !hasUpdates ? 'duplicate_contact_no_changes' : undefined,
+      pending_contact_update: hasUpdates
+        ? { contact_id: exactCompanyNameMatch.id, updates }
+        : undefined,
+      message: hasUpdates
+        ? `A contact named "${exactCompanyNameMatch.full_name}" already exists${exactCompanyNameMatch.email ? ` (${exactCompanyNameMatch.email})` : ''}${requestedCompanyName ? ` at ${requestedCompanyName}` : ''}. Reply "yes" to update this contact with the details you provided, or tell me what to change.`
+        : `A contact named "${exactCompanyNameMatch.full_name}" already exists${exactCompanyNameMatch.email ? ` (${exactCompanyNameMatch.email})` : ''}${requestedCompanyName ? ` at ${requestedCompanyName}` : ''}. What would you like to update?`,
     };
   }
 
   if (!requestedCompanyName && exactNameMatches.length > 0) {
+    const updates = buildDuplicateContactUpdatePayload(exactNameMatches[0], { name, email, phone, company, title });
+    const hasUpdates = Object.keys(updates).length > 0;
+    if (hasUpdates) {
+      await storeDuplicateContactUpdate(supabase, sessionId, sessionTable, {
+        existing_contact_id: exactNameMatches[0].id,
+        existing_contact_name: exactNameMatches[0].full_name,
+        requested_name: name,
+        requested_email: email,
+        updates,
+      });
+    }
     return {
       entity: 'contact',
       duplicate: true,
       existing: exactNameMatches[0],
-      message: `A contact named "${exactNameMatches[0].full_name}" already exists${exactNameMatches[0].email ? ` (${exactNameMatches[0].email})` : ''}. Would you like to update them instead?`,
+      _needsConfirmation: hasUpdates,
+      _confirmationType: hasUpdates ? 'duplicate_contact_update' : undefined,
+      _needsInput: !hasUpdates,
+      clarification_type: !hasUpdates ? 'duplicate_contact_no_changes' : undefined,
+      pending_contact_update: hasUpdates
+        ? { contact_id: exactNameMatches[0].id, updates }
+        : undefined,
+      message: hasUpdates
+        ? `A contact named "${exactNameMatches[0].full_name}" already exists${exactNameMatches[0].email ? ` (${exactNameMatches[0].email})` : ''}. Reply "yes" to update this contact with the details you provided, or tell me what to change.`
+        : `A contact named "${exactNameMatches[0].full_name}" already exists${exactNameMatches[0].email ? ` (${exactNameMatches[0].email})` : ''}. What would you like to update?`,
     };
   }
 

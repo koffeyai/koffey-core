@@ -161,8 +161,10 @@ const ADMIN_WRITE_ROLES = new Set(['owner', 'admin']);
 const PENDING_DRAFT_EMAIL_MAX_AGE_MS = 30 * 60 * 1000;
 const PENDING_DEAL_UPDATE_MAX_AGE_MS = 30 * 60 * 1000;
 const PENDING_SCHEDULE_MEETING_MAX_AGE_MS = 30 * 60 * 1000;
+const PENDING_CONTACT_WORKFLOW_MAX_AGE_MS = 30 * 60 * 1000;
 const CONFIRMATION_PROTECTED_TOOLS = new Set(['schedule_meeting', 'create_calendar_event']);
 const SCHEDULING_CONFIRMATION_PATTERN = /^(?:yes|yep|yeah|confirm|confirmed|send it|send the email|create it|book it|go ahead|proceed|do it|looks good)[\s.!?]*$/i;
+const CONTACT_CONFIRMATION_PATTERN = /^(?:yes|yep|yeah|confirm|confirmed|update it|apply it|go ahead|proceed|do it|looks good)[\s.!?]*$/i;
 const PENDING_DRAFT_EMAIL_CLARIFICATIONS = new Set([
   'missing_recipient_email',
   'missing_communication_context',
@@ -280,6 +282,20 @@ function normalizePendingDraftWorkflow(value: any): any | null {
   };
 }
 
+function isPendingDraftWorkflowCurrent(history: Array<{ role: string; content: string }>, value: any): boolean {
+  const workflow = normalizePendingDraftWorkflow(value);
+  if (!workflow) return false;
+
+  const latestAssistant = [...history].reverse().find((m) => m?.role === 'assistant');
+  if (!latestAssistant) return true;
+
+  const content = String(latestAssistant.content || '');
+  const assistantPrompt = String(workflow.assistantPrompt || '').slice(0, 80);
+  return assistantPrompt
+    ? content.includes(assistantPrompt)
+    : /need a recipient email before it becomes actionable|what should the note (?:say|communicate)|which one should i use/i.test(content);
+}
+
 function isFreshPendingDraftEmail(value: any, createdAt: unknown): boolean {
   if (!normalizePendingDraftWorkflow(value)) return false;
   const timestamp = createdAt ? Date.parse(String(createdAt)) : NaN;
@@ -336,6 +352,54 @@ function isPendingScheduleMeetingCancel(message: unknown): boolean {
 
 function isPendingSchedulingConfirmation(message: unknown): boolean {
   return SCHEDULING_CONFIRMATION_PATTERN.test(String(message || '').trim());
+}
+
+function normalizePendingContactWorkflow(value: any): any | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const type = value.type === 'duplicate_contact_update'
+    ? 'duplicate_contact_update'
+    : 'create_contact_details';
+  if (type === 'duplicate_contact_update') {
+    const updates = value.updates && typeof value.updates === 'object' && !Array.isArray(value.updates)
+      ? value.updates
+      : null;
+    if (!value.existing_contact_id || !updates || Object.keys(updates).length === 0) return null;
+    return {
+      type,
+      existing_contact_id: String(value.existing_contact_id),
+      existing_contact_name: typeof value.existing_contact_name === 'string' ? value.existing_contact_name : null,
+      requested_name: typeof value.requested_name === 'string' ? value.requested_name : null,
+      requested_email: typeof value.requested_email === 'string' ? value.requested_email : null,
+      updates,
+    };
+  }
+
+  return {
+    type,
+    name: value.name || null,
+    email: value.email || null,
+    phone: value.phone || null,
+    company: value.company || null,
+    title: value.title || null,
+    is_personal: value.is_personal === true,
+    lead_source: value.lead_source || null,
+    notes: value.notes || null,
+  };
+}
+
+function isFreshPendingContactWorkflow(value: any, createdAt: unknown): boolean {
+  if (!normalizePendingContactWorkflow(value)) return false;
+  const timestamp = createdAt ? Date.parse(String(createdAt)) : NaN;
+  if (!Number.isFinite(timestamp)) return false;
+  return Date.now() - timestamp <= PENDING_CONTACT_WORKFLOW_MAX_AGE_MS;
+}
+
+function isPendingContactCancel(message: unknown): boolean {
+  return /^(?:no|nope|cancel(?:\s+(?:the\s+)?(?:contact\s+)?(?:update|creation|change))?|stop|discard|never mind|nevermind)(?:\s+(?:it|this))?[\s.!?]*$/i.test(String(message || '').trim());
+}
+
+function isPendingContactConfirmation(message: unknown): boolean {
+  return CONTACT_CONFIRMATION_PATTERN.test(String(message || '').trim());
 }
 
 async function storePendingDraftEmail(
@@ -511,6 +575,22 @@ async function clearPendingScheduleMeeting(
 
   if (error) {
     console.warn(`[unified-chat] Failed to clear pending_schedule_meeting: ${error.message}`);
+  }
+}
+
+async function clearPendingContactWorkflow(
+  supabase: any,
+  sessionId: string | undefined,
+  sessionTable: 'chat_sessions' | 'messaging_sessions',
+) {
+  if (!sessionId) return;
+  const { error } = await supabase
+    .from(sessionTable)
+    .update({ pending_contact_creation: null, pending_contact_creation_at: null })
+    .eq('id', sessionId);
+
+  if (error) {
+    console.warn(`[unified-chat] Failed to clear pending_contact_creation: ${error.message}`);
   }
 }
 
@@ -771,10 +851,11 @@ const handler = async (req: Request): Promise<Response> => {
     let pendingDraftEmailData: any = null;
     let pendingDealUpdateData: any = null;
     let pendingScheduleMeetingData: any = null;
+    let pendingContactWorkflowData: any = null;
     if (sessionId) {
       const { data: pendingCheck } = await admin
         .from(sessionTable)
-        .select('pending_deal_creation, pending_extraction, pending_sequence_action, pending_draft_email, pending_draft_email_at, pending_deal_update, pending_deal_update_at, pending_schedule_meeting, pending_schedule_meeting_at')
+        .select('pending_deal_creation, pending_extraction, pending_sequence_action, pending_draft_email, pending_draft_email_at, pending_deal_update, pending_deal_update_at, pending_schedule_meeting, pending_schedule_meeting_at, pending_contact_creation, pending_contact_creation_at')
         .eq('id', sessionId)
         .maybeSingle();
       hasPendingDealCreation = !!pendingCheck?.pending_deal_creation;
@@ -794,6 +875,9 @@ const handler = async (req: Request): Promise<Response> => {
       }
       if (isFreshPendingScheduleMeeting(pendingCheck?.pending_schedule_meeting, pendingCheck?.pending_schedule_meeting_at)) {
         pendingScheduleMeetingData = pendingCheck.pending_schedule_meeting;
+      }
+      if (isFreshPendingContactWorkflow(pendingCheck?.pending_contact_creation, pendingCheck?.pending_contact_creation_at)) {
+        pendingContactWorkflowData = pendingCheck.pending_contact_creation;
       }
     }
 
@@ -865,9 +949,139 @@ const handler = async (req: Request): Promise<Response> => {
     const needsToolsBase = dataOrActionRequest || followUpLike || compoundLike;
     const domainsHint = authoritativeIntent.domains;
     const normalizedHistory = effectiveConversationHistory.map((m: any) => ({ role: m.role, content: m.content }));
+    const storedPendingDraftWorkflow = isPendingDraftWorkflowCurrent(normalizedHistory, pendingDraftEmailData)
+      ? normalizePendingDraftWorkflow(pendingDraftEmailData)
+      : null;
     const effectivePendingWorkflow = normalizePendingDraftWorkflow(providedPendingWorkflow)
-      || normalizePendingDraftWorkflow(pendingDraftEmailData);
+      || storedPendingDraftWorkflow;
     const effectivePendingScheduleMeeting = normalizePendingScheduleMeeting(pendingScheduleMeetingData);
+    const effectivePendingContactWorkflow = normalizePendingContactWorkflow(pendingContactWorkflowData);
+    if (effectivePendingContactWorkflow && isPendingContactCancel(message)) {
+      const processingMs = Date.now() - started;
+      await clearPendingContactWorkflow(admin, validation.sanitizedData.sessionId, sessionTable);
+      return new Response(JSON.stringify({
+        response: 'Canceled the contact change. Nothing was updated.',
+        crmOperations: [],
+        citations: [],
+        meta: {
+          traceId,
+          cancelledWorkflow: 'contact_update',
+          processingTimeMs: processingMs,
+        },
+        provenance: {
+          source: 'general_chat',
+          recordsFound: 0,
+          searchPerformed: false,
+          confidence: 'high',
+          processingTimeMs: processingMs,
+          analysisMode: 'general',
+          isolationEnforced: false,
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
+    if (effectivePendingContactWorkflow && isPendingContactConfirmation(message)) {
+      const toolName = effectivePendingContactWorkflow.type === 'duplicate_contact_update'
+        ? 'update_contact'
+        : 'create_contact';
+      const args = effectivePendingContactWorkflow.type === 'duplicate_contact_update'
+        ? {
+          contact_id: effectivePendingContactWorkflow.existing_contact_id,
+          updates: effectivePendingContactWorkflow.updates,
+        }
+        : {
+          name: effectivePendingContactWorkflow.name,
+          email: effectivePendingContactWorkflow.email,
+          phone: effectivePendingContactWorkflow.phone,
+          company: effectivePendingContactWorkflow.company,
+          title: effectivePendingContactWorkflow.title,
+          is_personal: effectivePendingContactWorkflow.is_personal,
+          lead_source: effectivePendingContactWorkflow.lead_source,
+          notes: effectivePendingContactWorkflow.notes,
+          confirmed: true,
+        };
+      const permissionError = getToolPermissionError(toolName, authorizedOrg?.role);
+      if (permissionError) {
+        const processingMs = Date.now() - started;
+        return new Response(JSON.stringify({
+          response: permissionError,
+          crmOperations: [{
+            tool: toolName,
+            args,
+            result: { error: true, permissionDenied: true, message: permissionError },
+          }],
+          citations: [],
+          meta: {
+            traceId,
+            deterministicMutationPlan: 'resume_contact_workflow',
+            processingTimeMs: processingMs,
+          },
+          provenance: {
+            source: 'general_chat',
+            recordsFound: 0,
+            searchPerformed: false,
+            confidence: 'high',
+            processingTimeMs: processingMs,
+            analysisMode: 'general',
+            isolationEnforced: false,
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+
+      const result = await executeRegistryTool(toolName, args, {
+        supabase: admin,
+        organizationId,
+        userId,
+        sessionId: validation.sanitizedData.sessionId,
+        sessionTable,
+        traceId,
+        authHeader: internalCall ? undefined : authHeader,
+      });
+      if (!result?.error && result?.success !== false && !result?._needsInput && !result?._needsConfirmation) {
+        await clearPendingContactWorkflow(admin, validation.sanitizedData.sessionId, sessionTable);
+      }
+
+      const processingMs = Date.now() - started;
+      const response = result?.message || (result?.success === false
+        ? 'I could not complete that contact change.'
+        : 'I completed the contact change.');
+      return new Response(JSON.stringify({
+        response,
+        crmOperations: [{ tool: toolName, args, result }],
+        citations: [],
+        meta: {
+          traceId,
+          deterministicMutationPlan: 'resume_contact_workflow',
+          execution: buildPublicExecutionMeta({
+            taskClass: 'crm_write',
+            needsTools: true,
+            schemaCount: 1,
+            retrievalPath: 'none',
+            toolPlannerInvoked: true,
+            deterministicPathUsed: true,
+            groundingState: result?.success === false ? 'failure' : 'verified',
+          }),
+          processingTimeMs: processingMs,
+        },
+        provenance: {
+          source: 'database',
+          recordsFound: result?.id ? 1 : 0,
+          searchPerformed: false,
+          confidence: result?.success === false ? 'medium' : 'high',
+          processingTimeMs: processingMs,
+          analysisMode: 'general',
+          isolationEnforced: false,
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
     if (effectivePendingScheduleMeeting && isPendingScheduleMeetingCancel(message)) {
       const processingMs = Date.now() - started;
       await clearPendingScheduleMeeting(admin, validation.sanitizedData.sessionId, sessionTable);
@@ -1103,7 +1317,8 @@ const handler = async (req: Request): Promise<Response> => {
     const hasPendingUpdateDealContext = !!effectivePendingUpdateDealData;
     const hasPendingDraftEmailContext = !!historyPendingDraftEmailData;
     const hasPendingScheduleMeetingContext = !!effectivePendingScheduleMeeting;
-    const hasPendingMutationContext = hasPendingDealContext || hasPendingSequenceAction || hasPendingDeleteDealContext || hasPendingUpdateDealContext || hasPendingDraftEmailContext || hasPendingScheduleMeetingContext;
+    const hasPendingContactContext = !!effectivePendingContactWorkflow;
+    const hasPendingMutationContext = hasPendingDealContext || hasPendingSequenceAction || hasPendingDeleteDealContext || hasPendingUpdateDealContext || hasPendingDraftEmailContext || hasPendingScheduleMeetingContext || hasPendingContactContext;
     const provisionalRoutingPolicy = determineRoutingPolicy({
       message,
       historyText,
@@ -1200,6 +1415,12 @@ const handler = async (req: Request): Promise<Response> => {
     }
     if (hasPendingScheduleMeetingContext && !domainFilter) {
       domainFilter = ['scheduling', 'search', 'context'];
+    }
+    if (hasPendingContactContext && domainFilter) {
+      domainFilter = Array.from(new Set([...domainFilter, 'create', 'update', 'search'] as SkillDomain[]));
+    }
+    if (hasPendingContactContext && !domainFilter) {
+      domainFilter = ['create', 'update', 'search'];
     }
 
     let routing = routeRequest({

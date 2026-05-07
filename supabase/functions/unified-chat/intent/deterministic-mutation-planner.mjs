@@ -1564,6 +1564,13 @@ export function buildDeterministicPendingDealPlanFromHistory(message, conversati
 
 export function inferPendingDraftEmailFromHistory(conversationHistory = []) {
   const history = Array.isArray(conversationHistory) ? conversationHistory : [];
+  const latestAssistant = [...history].reverse().find((message) => message?.role === 'assistant');
+  if (
+    latestAssistant
+    && !PENDING_DRAFT_EMAIL_ASSISTANT_PATTERN.test(normalizeWhitespace(latestAssistant?.content || ''))
+  ) {
+    return null;
+  }
 
   for (let i = history.length - 1; i >= 0; i -= 1) {
     const assistantMessage = history[i];

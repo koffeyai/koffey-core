@@ -1342,6 +1342,21 @@ test('buildDeterministicPendingDraftEmailPlan resumes public-domain audience cla
   );
 });
 
+test('buildDeterministicPendingDraftEmailPlan ignores stale draft prompt after contact confirmation prompt', () => {
+  const plan = buildDeterministicPendingDraftEmailPlan(
+    'yes!',
+    [
+      { role: 'user', content: 'send a note about northstar expansion' },
+      { role: 'assistant', content: 'Action status:\n- draft_email: I found 4 matching deals for "northstar expansion". Which one should I use?' },
+      { role: 'user', content: 'add Jordan Example to the Example Robotics account' },
+      { role: 'assistant', content: 'A contact with email existing@example.com already exists: Existing Person. Reply "yes" to update this contact with the details you provided, or tell me what to change.' },
+    ],
+    new Set(['draft_email']),
+  );
+
+  assert.equal(plan, null);
+});
+
 test('repairDraftEmailArgsFromMessage rehydrates regenerate voice-note prompts', () => {
   const repaired = repairDraftEmailArgsFromMessage(
     {
