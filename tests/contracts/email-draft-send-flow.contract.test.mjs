@@ -12,6 +12,8 @@ test('email draft card sends through direct audited send path instead of chat re
   const googleAuth = readFileSync(path.join(repoRoot, 'src/components/auth/GoogleAuth.tsx'), 'utf8');
 
   assert.match(chatUi, /onSend=\{sendEmailDraft\}/);
+  assert.match(chatUi, /onApplyVoiceNotes=\{/);
+  assert.match(useChat, /voice_notes\?: string/);
   assert.doesNotMatch(chatUi, /Send the email to \$\{draft\.to_name\}/);
   assert.match(useChat, /functions\.invoke\('send-scheduling-email'/);
   assert.match(useChat, /crmOperations: \[\{ tool: 'send_scheduling_email'/);

@@ -74,6 +74,92 @@ function firstName(fullName: string): string {
   return fullName.trim().split(/\s+/)[0] || 'there';
 }
 
+const PUBLIC_EMAIL_DOMAINS = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'yahoo.com',
+  'ymail.com',
+  'outlook.com',
+  'hotmail.com',
+  'live.com',
+  'msn.com',
+  'icloud.com',
+  'me.com',
+  'mac.com',
+  'aol.com',
+  'proton.me',
+  'protonmail.com',
+  'pm.me',
+  'hey.com',
+  'fastmail.com',
+  'mail.com',
+  'zoho.com',
+]);
+
+function emailDomain(value: unknown): string {
+  const match = String(value || '').toLowerCase().match(/@([a-z0-9.-]+\.[a-z]{2,})$/);
+  return match?.[1] || '';
+}
+
+function normalizeAudienceScope(value: unknown): 'internal' | 'external' | '' {
+  const raw = String(value || '').toLowerCase().replace(/[_-]+/g, ' ').trim();
+  if (!raw) return '';
+  if (/\b(?:internal|internally|for our team|for the team|private|internal facing)\b/.test(raw)) return 'internal';
+  if (/\b(?:external|externally|customer facing|client facing|outside|public facing|external facing)\b/.test(raw)) return 'external';
+  return '';
+}
+
+function isPublicEmailDomain(value: unknown): boolean {
+  const domain = emailDomain(value);
+  return Boolean(domain && PUBLIC_EMAIL_DOMAINS.has(domain));
+}
+
+function stripInternalSourceMarkers(value: unknown): string {
+  return String(value || '')
+    .replace(/\bAction status:\s*/gi, '')
+    .replace(/\b(?:draft_email|send_scheduling_email|crmOperations|tool result|tool call|function call|function output)\b/gi, '')
+    .replace(/\b(?:system|developer|assistant)\s+(?:prompt|message|instruction)s?\b/gi, '')
+    .replace(/\b(?:hidden|private)\s+(?:prompt|instruction|system note)s?\b/gi, '')
+    .replace(/\bCRM note:?\s*/gi, '')
+    .replace(/\bAdded\s+(?:task|deal|contact|account|activity|note):\s*/gi, '')
+    .replace(/\b(?:verbatim|copy exactly|quote exactly)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function sanitizeExternalText(value: unknown): string {
+  const cleaned = stripInternalSourceMarkers(value);
+  if (!cleaned) return '';
+
+  return cleaned
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => !/\b(?:system prompt|developer message|tool result|tool call|Action status|draft_email|CRM note)\b/i.test(sentence))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function sanitizeVoiceNotes(value: unknown): string {
+  const cleaned = stripInternalSourceMarkers(value)
+    .replace(/^(?:use\s+)?(?:these\s+)?(?:user\s+)?voice notes?\s*[:=-]?\s*/i, '')
+    .trim();
+  if (!cleaned) return '';
+  return cleaned.slice(0, 260).trim();
+}
+
+function resolveVoicePreferences(tone: string, voiceNotes: string) {
+  const lower = `${tone || ''} ${voiceNotes || ''}`.toLowerCase();
+  const signatureMatch = voiceNotes.match(/\bsign(?:ed|ing)?\s*(?:off\s*)?(?:as|with)\s+([A-Za-z][A-Za-z0-9 .'-]{0,60})(?=\s*(?:[.;,]|$))/i);
+  return {
+    concise: /\b(?:concise|brief|short|tight|punchy)\b/.test(lower),
+    direct: /\b(?:direct|clear|straightforward|no fluff|plainspoken)\b/.test(lower),
+    warm: /\b(?:warm|friendly|human|casual|approachable)\b/.test(lower),
+    formal: /\b(?:formal|polished|executive)\b/.test(lower),
+    signature: signatureMatch?.[1]?.trim() || '',
+  };
+}
+
 function cleanLookupCandidate(value: unknown): string {
   return String(value || '')
     .replace(/["'`“”‘’]/g, '')
@@ -122,9 +208,12 @@ function sanitizeOrFilterValue(value: unknown): string {
   return String(value || '').replace(/[%*,]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-function formatContextForEmail(value: string): string {
-  const cleaned = value
-    .replace(/\b(?:please\s+)?(?:mention|include|cover|add)\b\s*/ig, '')
+function formatContextForEmail(value: string, audienceScope: 'internal' | 'external' = 'external'): string {
+  const sourceText = audienceScope === 'external'
+    ? sanitizeExternalText(value)
+    : stripInternalSourceMarkers(value);
+  const cleaned = sourceText
+    .replace(/\b(?:please\s+)?(?:mention|include|cover|add|recap|summarize|review)\b\s*/ig, '')
     .replace(/\bwith\s+next\s+steps?\b/ig, 'next steps')
     .replace(/^\$[\d,.]+(?:\.\d+)?\s*[KMBkmb]?\s+/, '')
     .replace(/\s+/g, ' ')
@@ -175,6 +264,8 @@ function buildMultipleDealClarification(params: {
   recipientEmail?: string;
   emailType?: string;
   accountName?: string;
+  audienceScope?: string;
+  voiceNotes?: string;
 }) {
   const optionLines = params.deals.slice(0, 5).map(formatDealOption);
   const needsContext = isMissingCommunicationContext(params.userContext);
@@ -200,6 +291,8 @@ function buildMultipleDealClarification(params: {
     recipient_email: params.recipientEmail || null,
     email_type: params.emailType || 'follow_up',
     account_name: params.accountName || null,
+    audience_scope: params.audienceScope || null,
+    voice_notes: params.voiceNotes || null,
     user_context: params.userContext || null,
     message: `I found ${params.deals.length} matching deals for "${params.label}". Which one should I use?\n${optionLines.join('\n')}${contextQuestion}`,
     follow_up_prompt: needsContext
@@ -232,12 +325,16 @@ function buildDraftBody(params: {
   recipientName: string;
   emailType: string;
   tone: string;
+  voiceNotes: string;
+  audienceScope: 'internal' | 'external';
   context: string;
   deal: Record<string, unknown> | null;
   accountName: string;
   recentActivities: Array<Record<string, unknown>>;
 }): string {
   const greeting = `Hi ${firstName(params.recipientName)},`;
+  const voice = resolveVoicePreferences(params.tone, params.voiceNotes);
+  const externalFacing = params.audienceScope === 'external';
   const dealName = firstNonEmpty(params.deal?.name);
   const amount = formatMoney(params.deal?.amount);
   const stage = firstNonEmpty(params.deal?.stage);
@@ -246,9 +343,13 @@ function buildDraftBody(params: {
   const accountPhrase = params.accountName ? ` with ${params.accountName}` : '';
   const dealPhrase = dealName ? ` on ${dealName}` : accountPhrase;
 
-  const formattedContext = formatContextForEmail(params.context);
+  const formattedContext = formatContextForEmail(params.context, params.audienceScope);
   const contextLine = formattedContext
-    ? `I wanted to follow up${dealPhrase} and make sure we are aligned on ${formattedContext}.`
+    ? voice.concise || voice.direct
+      ? `Following up${dealPhrase} regarding ${formattedContext}.`
+      : voice.warm
+        ? `I wanted to follow up${dealPhrase} and make sure we're aligned on ${formattedContext}.`
+        : `I wanted to follow up${dealPhrase} and make sure we are aligned on ${formattedContext}.`
     : `I wanted to follow up${dealPhrase} and keep momentum on the next step.`;
 
   const detailParts = [
@@ -257,26 +358,28 @@ function buildDraftBody(params: {
     closeDate ? `target close date: ${closeDate}` : '',
   ].filter(Boolean);
 
-  const detailsLine = detailParts.length > 0
+  const detailsLine = !externalFacing && detailParts.length > 0
     ? `From my side, I have ${detailParts.join(', ')}.`
     : '';
 
   const activity = params.recentActivities[0];
-  const activityLine = activity
+  const activityLine = !externalFacing && activity
     ? `I also saw the latest CRM note: "${firstNonEmpty(activity.title, activity.description)}".`
     : '';
 
-  const useCaseLine = useCase
+  const useCaseLine = !externalFacing && useCase
     ? `The main thing I want to connect back to is ${useCase}.`
     : '';
 
   const cta = params.emailType === 'meeting_request'
     ? 'Would you be open to a quick 20-minute conversation this week to confirm priorities and agree on next steps?'
-    : 'Can you share what would be most useful for us to cover next so we can move this forward cleanly?';
+    : voice.concise || voice.direct
+      ? 'What is the best next step on your side?'
+      : 'Can you share what would be most useful for us to cover next so we can move this forward cleanly?';
 
-  const close = params.tone === 'formal'
+  const close = voice.formal
     ? 'Best regards,'
-    : params.tone === 'casual'
+    : params.tone === 'casual' || voice.warm
       ? 'Thanks,'
       : 'Best,';
 
@@ -291,6 +394,7 @@ function buildDraftBody(params: {
     cta,
     '',
     close,
+    voice.signature,
   ].filter((line, index, lines) => line || lines[index - 1] !== '').join('\n').trim();
 }
 
@@ -354,6 +458,15 @@ Always include a clear subject line and call-to-action.`,
             enum: ['professional', 'casual', 'warm', 'formal'],
             description: 'Email tone preference (default: professional)',
           },
+          voice_notes: {
+            type: 'string',
+            description: 'Optional user-authored notes about how the email should sound. Use as style guidance only; do not quote these notes in the email.',
+          },
+          audience_scope: {
+            type: 'string',
+            enum: ['internal', 'external'],
+            description: 'Whether the draft is internal-facing or external-facing. Ask before drafting when the recipient uses a public email domain and this is unclear.',
+          },
         },
         required: [],
       },
@@ -364,6 +477,8 @@ Always include a clear subject line and call-to-action.`,
   - Drafts the email and shows it to the user — NEVER sends automatically
   - Uses CRM context to personalize (deal details, contact info, recent activities)
   - Always includes subject line and call-to-action
+  - For public email domains, ask whether the draft is internal-facing or external-facing before composing
+  - External-facing drafts must not quote system/tool/CRM note wording or expose internal CRM metadata verbatim
   - User must explicitly approve before any email is sent`,
 
   execute: async (ctx: ToolExecutionContext) => {
@@ -377,11 +492,17 @@ Always include a clear subject line and call-to-action.`,
       deal_id: argDealId,
       account_name,
       tone,
+      voice_notes,
+      audience_scope,
     } = args as Record<string, string | undefined>;
+    const requestedAudienceScope = normalizeAudienceScope(audience_scope);
+    const safeVoiceNotes = sanitizeVoiceNotes(voice_notes);
 
     const result: Record<string, unknown> = {
       email_type: email_type || 'custom',
       tone: tone || 'professional',
+      audience_scope: requestedAudienceScope || null,
+      voice_notes: safeVoiceNotes || null,
       user_context: userContext || null,
     };
 
@@ -426,6 +547,8 @@ Always include a clear subject line and call-to-action.`,
             recipientEmail: recipient_email,
             emailType: email_type,
             accountName: account_name,
+            audienceScope: requestedAudienceScope,
+            voiceNotes: safeVoiceNotes,
           });
         }
         if (data) {
@@ -448,6 +571,17 @@ Always include a clear subject line and call-to-action.`,
         .select('id, full_name, email, title, company, phone, notes, nurture_stage')
         .eq('organization_id', organizationId)
         .or(`full_name.ilike.%${recipient_name}%,first_name.ilike.%${recipient_name}%,last_name.ilike.%${recipient_name}%`)
+        .limit(1)
+        .single();
+      contact = data;
+    }
+
+    if (!contact && recipient_email) {
+      const { data } = await supabase
+        .from('contacts')
+        .select('id, full_name, email, title, company, phone, notes, nurture_stage')
+        .eq('organization_id', organizationId)
+        .eq('email', recipient_email)
         .limit(1)
         .single();
       contact = data;
@@ -593,16 +727,8 @@ Always include a clear subject line and call-to-action.`,
     const recentActivities = Array.isArray(result.recent_activities)
       ? result.recent_activities as Array<Record<string, unknown>>
       : [];
-    const subject = buildDraftSubject(resolvedEmailType, deal, resolvedAccountName, userContext || '');
-    const message = buildDraftBody({
-      recipientName: resolvedRecipientName,
-      emailType: resolvedEmailType,
-      tone: resolvedTone,
-      context: userContext || '',
-      deal,
-      accountName: resolvedAccountName,
-      recentActivities,
-    });
+    const subjectContext = formatContextForEmail(userContext || '', requestedAudienceScope || 'external');
+    const subject = buildDraftSubject(resolvedEmailType, deal, resolvedAccountName, subjectContext);
 
     if (!resolvedRecipientEmail) {
       const dealLabel = firstNonEmpty((deal as any)?.name, deal_name, resolvedAccountName, 'this deal');
@@ -618,6 +744,8 @@ Always include a clear subject line and call-to-action.`,
         clarification_type: 'missing_recipient_email',
         deal_id: (deal as any)?.id || null,
         deal_name: (deal as any)?.name || deal_name || null,
+        audience_scope: requestedAudienceScope || null,
+        voice_notes: safeVoiceNotes || null,
         message,
         follow_up_prompt: 'Reply with the recipient name/email and any notes to include, and I will create the draft.',
       };
@@ -639,19 +767,58 @@ Always include a clear subject line and call-to-action.`,
         recipient_name: recipientLabel || null,
         recipient_email: resolvedRecipientEmail,
         email_type: resolvedEmailType,
+        audience_scope: requestedAudienceScope || null,
+        voice_notes: safeVoiceNotes || null,
         message: `I can draft the note${recipientLabel ? ` to ${recipientLabel}` : ''}${dealLabel ? ` about ${dealLabel}` : ''}, but I need to know what it should communicate. What should the note say or ask for?`,
         follow_up_prompt: 'Reply with the message goal/details, and I will create the draft.',
       };
     }
 
+    if (isPublicEmailDomain(resolvedRecipientEmail) && !requestedAudienceScope) {
+      const domain = emailDomain(resolvedRecipientEmail);
+      const recipientLabel = resolvedRecipientName && resolvedRecipientName !== 'there'
+        ? resolvedRecipientName
+        : resolvedRecipientEmail;
+      return {
+        ...result,
+        success: false,
+        _needsInput: true,
+        clarification_type: 'missing_audience_scope',
+        deal_id: (deal as any)?.id || null,
+        deal_name: (deal as any)?.name || deal_name || null,
+        account_name: resolvedAccountName || null,
+        recipient_name: recipientLabel || null,
+        recipient_email: resolvedRecipientEmail,
+        email_type: resolvedEmailType,
+        public_domain: domain,
+        message: `${recipientLabel} uses a public email domain (${domain}). Is this internal-facing or external-facing? I will keep external-facing drafts free of internal CRM/system wording.`,
+        follow_up_prompt: 'Reply with "external-facing" or "internal-facing", and I will create the draft.',
+      };
+    }
+
+    const resolvedAudienceScope = requestedAudienceScope || 'external';
     result.success = true;
     result.isDraft = true;
     result.recipientName = resolvedRecipientName === 'there' ? '' : resolvedRecipientName;
     result.recipientEmail = resolvedRecipientEmail;
     result.emailType = resolvedEmailType;
     result.tone = resolvedTone;
+    result.audience_scope = resolvedAudienceScope;
+    result.audienceScope = resolvedAudienceScope;
+    result.voice_notes = safeVoiceNotes || null;
+    result.voiceNotes = safeVoiceNotes || '';
     result.subject = subject;
-    result.message = message;
+    result.message = buildDraftBody({
+      recipientName: resolvedRecipientName,
+      emailType: resolvedEmailType,
+      tone: resolvedTone,
+      voiceNotes: safeVoiceNotes,
+      audienceScope: resolvedAudienceScope,
+      context: userContext || '',
+      deal,
+      accountName: resolvedAccountName,
+      recentActivities,
+    });
     result.dealContext = deal ? {
       id: (deal as any).id,
       name: (deal as any).name,

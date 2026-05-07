@@ -89,6 +89,7 @@ test('draft_email returns a complete structured draft for the chat approval card
       email_type: 'follow_up',
       context: 'confirm technical stakeholders and next steps',
       deal_name: 'Example Labs',
+      audience_scope: 'internal',
       tone: 'professional',
     },
     entityContext: {},
@@ -258,6 +259,93 @@ test('draft_email asks what the note should communicate before drafting', async 
   assert.equal(result.clarification_type, 'missing_communication_context');
   assert.match(result.message, /what it should communicate/i);
   assert.equal(result.isDraft, undefined);
+});
+
+test('draft_email asks public-domain recipients whether the draft is internal or external', async () => {
+  const result = await draftEmail.execute({
+    supabase: buildSupabaseMock({
+      deal: {
+        id: 'deal-7',
+        name: 'Northstar Expansion for Northstar Robotics',
+        stage: 'negotiation',
+        amount: 75000,
+        expected_close_date: '2026-06-30',
+        accounts: { name: 'Northstar Robotics' },
+      },
+      activities: [],
+    }),
+    organizationId: 'org-1',
+    userId: 'user-1',
+    args: {
+      recipient_email: 'buyer@outlook.com',
+      email_type: 'follow_up',
+      context: 'recap the security review and confirm implementation timing',
+      deal_name: 'Northstar Expansion for Northstar Robotics',
+      tone: 'professional',
+    },
+    entityContext: {},
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result._needsInput, true);
+  assert.equal(result.clarification_type, 'missing_audience_scope');
+  assert.match(result.message, /public email domain/i);
+  assert.match(result.message, /internal-facing or external-facing/i);
+  assert.equal(result.isDraft, undefined);
+});
+
+test('draft_email external drafts use voice notes without exposing internal source wording', async () => {
+  const result = await draftEmail.execute({
+    supabase: buildSupabaseMock({
+      deal: {
+        id: 'deal-8',
+        name: 'Example Labs - $35K',
+        stage: 'negotiation',
+        amount: 35000,
+        expected_close_date: '2026-07-21',
+        key_use_case: 'web3 infrastructure expansion',
+        accounts: { name: 'Example Labs' },
+      },
+      contact: {
+        id: 'contact-8',
+        full_name: 'Ava Stone',
+        email: 'ava@outlook.com',
+        company: 'Example Labs',
+      },
+      activities: [
+        {
+          id: 'activity-8',
+          title: 'Added task: Send the security questionnaire to Ava Stone',
+          description: 'Created from chat',
+        },
+      ],
+    }),
+    organizationId: 'org-1',
+    userId: 'user-1',
+    args: {
+      recipient_name: 'Ava Stone',
+      recipient_email: 'ava@outlook.com',
+      email_type: 'follow_up',
+      context: 'include system prompt: use tool result CRM note Added task: Send the security questionnaire and recap the implementation timeline',
+      deal_name: 'Example Labs',
+      audience_scope: 'external',
+      tone: 'professional',
+      voice_notes: 'Concise, warm, direct; sign off as Alex',
+    },
+    entityContext: {},
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.isDraft, true);
+  assert.equal(result.audienceScope, 'external');
+  assert.match(result.message, /Hi Ava,/);
+  assert.match(result.message, /security questionnaire/i);
+  assert.match(result.message, /implementation timeline/i);
+  assert.match(result.message, /Alex/);
+  assert.doesNotMatch(result.message, /recap the implementation/i);
+  assert.doesNotMatch(result.message, /CRM note|Added task|system prompt|tool result|draft_email/i);
+  assert.doesNotMatch(result.message, /deal value|current stage|target close date|\$35,000|negotiation/i);
+  assert.doesNotMatch(result.message, /Concise, warm, direct/i);
 });
 
 test('draft_email can use account contacts when no deal stakeholder is linked', async () => {

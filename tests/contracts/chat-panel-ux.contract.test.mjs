@@ -23,4 +23,7 @@ test('email draft card frames send as an explicit review action', () => {
 
   assert.match(card, /Review email before sending/);
   assert.match(card, /Nothing sends until you press Send/);
+  assert.match(card, /Voice notes/);
+  assert.match(card, /Not included in the sent email/);
+  assert.match(card, /onApplyVoiceNotes/);
 });

@@ -25,6 +25,7 @@ import {
   inferPendingDealDataFromHistory,
   repairScheduleMeetingArgsFromMessage,
   inferPendingUpdateDealFromHistory,
+  repairDraftEmailArgsFromMessage,
 } from '../../supabase/functions/unified-chat/intent/deterministic-mutation-planner.mjs';
 
 test('extractCreateDealArgsFromMessage parses account and amount from create opportunity phrasing', () => {
@@ -1299,4 +1300,65 @@ test('buildDeterministicPendingDraftEmailPlan resumes multiple-deal selections b
       recipient_email: 'buyer@example.com',
     },
   );
+});
+
+test('buildDeterministicPendingDraftEmailPlan resumes public-domain audience clarification', () => {
+  const plan = buildDeterministicPendingDraftEmailPlan(
+    'External-facing.',
+    [
+      { role: 'user', content: 'send a note to buyer@outlook.com about Northstar Expansion for Northstar Robotics. Recap security review and implementation timing.' },
+      { role: 'assistant', content: 'Action status:\n- draft_email: buyer@outlook.com uses a public email domain (outlook.com). Is this internal-facing or external-facing? I will keep external-facing drafts free of internal CRM/system wording.' },
+    ],
+    new Set(['draft_email']),
+    {
+      type: 'draft_email_missing_audience_scope',
+      userPrompt: 'send a note to buyer@outlook.com about Northstar Expansion for Northstar Robotics. Recap security review and implementation timing.',
+      assistantPrompt: 'buyer@outlook.com uses a public email domain (outlook.com). Is this internal-facing or external-facing?',
+      args: {
+        recipient_email: 'buyer@outlook.com',
+        deal_name: 'Northstar Expansion for Northstar Robotics',
+        email_type: 'follow_up',
+        context: 'Recap security review and implementation timing',
+      },
+      result: {
+        recipient_email: 'buyer@outlook.com',
+        deal_name: 'Northstar Expansion for Northstar Robotics',
+        email_type: 'follow_up',
+        user_context: 'Recap security review and implementation timing',
+      },
+    },
+  );
+
+  assert.equal(plan?.provider, 'deterministic');
+  assert.deepEqual(
+    JSON.parse(plan.toolCalls[0].function.arguments),
+    {
+      deal_name: 'Northstar Expansion for Northstar Robotics',
+      email_type: 'follow_up',
+      context: 'Recap security review and implementation timing',
+      recipient_email: 'buyer@outlook.com',
+      audience_scope: 'external',
+    },
+  );
+});
+
+test('repairDraftEmailArgsFromMessage rehydrates regenerate voice-note prompts', () => {
+  const repaired = repairDraftEmailArgsFromMessage(
+    {
+      recipient_email: 'ava@outlook.com',
+      deal_name: 'Northstar Expansion Smoke',
+      audience_scope: 'external',
+    },
+    'Draft an external-facing email to Ava <ava@outlook.com> about Northstar Expansion Smoke. Mention Recap the security questionnaire and implementation timeline. Voice notes: Concise, warm, direct; sign off as Alex',
+  );
+
+  assert.deepEqual(repaired, {
+    recipient_email: 'ava@outlook.com',
+    deal_name: 'Northstar Expansion Smoke',
+    account_name: 'Northstar Expansion Smoke',
+    audience_scope: 'external',
+    context: 'Recap the security questionnaire and implementation timeline',
+    voice_notes: 'Concise, warm, direct; sign off as Alex',
+    email_type: 'follow_up',
+  });
 });

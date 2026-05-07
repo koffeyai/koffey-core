@@ -42,7 +42,7 @@ const UPDATE_ACCOUNT_RENAME_WITH_ACCOUNT_PATTERN = /\b(?:rename|change|update)\b
 const UPDATE_ACCOUNT_NOT_FOUND_PATTERN = /\bi couldn't find an account matching\b/i;
 const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
 const DRAFT_EMAIL_REQUEST_PATTERN = /\b(?:draft|write|compose|create|send)\b[\s\S]*\b(?:email|message|note|follow[\s-]?up|reply)\b/i;
-const PENDING_DRAFT_EMAIL_ASSISTANT_PATTERN = /\bdraft_email\b[\s\S]*\bneed a recipient email\b|\bneed a recipient email before it becomes actionable\b|\bwhat should the note (?:say|communicate)\b|\bwhat it should communicate\b|\bi found \d+ matching deals\b[\s\S]*\bwhich one should i use\b/i;
+const PENDING_DRAFT_EMAIL_ASSISTANT_PATTERN = /\bdraft_email\b[\s\S]*\bneed a recipient email\b|\bneed a recipient email before it becomes actionable\b|\bwhat should the note (?:say|communicate)\b|\bwhat it should communicate\b|\bi found \d+ matching deals\b[\s\S]*\bwhich one should i use\b|\bpublic email domain\b[\s\S]*\binternal-facing or external-facing\b|\binternal-facing or external-facing\b/i;
 const SEQUENCE_FILLER_PATTERN = /\b(?:use|the|sequence|cadence|please|thanks|thank\s+you|for|to|in|on)\b/gi;
 const DELETE_CONFIRMATION_PATTERN = /^(?:yes|yep|yeah|confirm|confirmed|proceed|delete it|remove it|go ahead|do it|permanently delete it)[\s.!?]*$/i;
 const PENDING_DELETE_ASSISTANT_PATTERN = /\bpermanently delete\b[\s\S]*\breply\s+["']?yes["']?\s+to\s+confirm deletion\b/i;
@@ -267,6 +267,35 @@ export function repairScheduleMeetingArgsFromMessage(args, message) {
   return repaired;
 }
 
+export function repairDraftEmailArgsFromMessage(args, message) {
+  const repaired = args && typeof args === 'object' && !Array.isArray(args)
+    ? { ...args }
+    : {};
+  const rawMessage = normalizeWhitespace(message);
+  if (!rawMessage) return repaired;
+
+  const context = extractDraftContextFromMessage(rawMessage);
+  const audienceScope = extractDraftAudienceScopeFromMessage(rawMessage);
+  const voiceNotes = extractDraftVoiceNotesFromMessage(rawMessage);
+  const recipientEmail = extractContactEmailFromMessage(rawMessage);
+  const recipientName = extractDraftRecipientNameFromMessage(rawMessage);
+  const dealName = extractDraftDealNameFromMessage(rawMessage);
+  const hasSuspiciousDraftValue = (value) => /\b(?:mention|voice notes?|message goal|sign off|recap)\b/i.test(String(value || ''));
+
+  if (!repaired.context && context) repaired.context = context;
+  if (!repaired.audience_scope && audienceScope) repaired.audience_scope = audienceScope;
+  if (!repaired.voice_notes && voiceNotes) repaired.voice_notes = voiceNotes;
+  if (!repaired.recipient_email && recipientEmail) repaired.recipient_email = recipientEmail;
+  if (!repaired.recipient_name && recipientName) repaired.recipient_name = recipientName;
+  if (dealName && (!repaired.deal_name || hasSuspiciousDraftValue(repaired.deal_name))) repaired.deal_name = dealName;
+  if (dealName && (!repaired.account_name || hasSuspiciousDraftValue(repaired.account_name))) {
+    repaired.account_name = dealName.replace(/\s+-\s+\$[\d,.]+(?:\.\d+)?\s*[kmb]?$/i, '').trim();
+  }
+  if (!repaired.email_type) repaired.email_type = extractDraftEmailTypeFromMessage(rawMessage);
+
+  return repaired;
+}
+
 function extractTrailingAccountNameFromCreateDealMessage(message) {
   const rawMessage = normalizeWhitespace(message);
   if (!rawMessage) return null;
@@ -307,6 +336,39 @@ function sanitizeDraftContext(value) {
   return cleaned;
 }
 
+function sanitizeDraftVoiceNotes(value) {
+  const cleaned = normalizeWhitespace(value)
+    .replace(/^[("'`“”‘’\s]+|[)"'`“”‘’.,!?;\s]+$/g, '')
+    .replace(/^(?:use\s+)?(?:these\s+)?(?:user\s+)?voice notes?\s*[:=-]?\s*/i, '')
+    .trim();
+  if (!cleaned) return null;
+  if (cleaned.length < 2 || cleaned.length > 260) return null;
+  return cleaned;
+}
+
+function extractDraftAudienceScopeFromMessage(message) {
+  const rawMessage = normalizeWhitespace(message).toLowerCase();
+  if (!rawMessage) return null;
+  if (/\b(?:internal(?:ly)?(?:[-\s]?facing)?|for our team|for the team|private)\b/.test(rawMessage)) return 'internal';
+  if (/\b(?:external(?:ly)?(?:[-\s]?facing)?|customer[-\s]?facing|client[-\s]?facing|outside[-\s]?facing|public[-\s]?facing)\b/.test(rawMessage)) return 'external';
+  return null;
+}
+
+function isAudienceScopeOnlyMessage(message) {
+  const rawMessage = normalizeWhitespace(message);
+  if (!rawMessage) return false;
+  return /^(?:it(?:'s| is)\s+|make\s+(?:it|this)\s+|this\s+is\s+|the\s+(?:draft|email|message|note)\s+is\s+)?(?:internal|internal-facing|internally facing|external|external-facing|externally facing|customer-facing|client-facing|outside-facing|public-facing)(?:\s+please)?[.!?]*$/i.test(rawMessage);
+}
+
+function extractDraftVoiceNotesFromMessage(message) {
+  const rawMessage = normalizeWhitespace(message);
+  if (!rawMessage) return null;
+
+  const explicit = rawMessage.match(/\b(?:user\s+)?voice notes?\s*(?:are|is|:|-)?\s*(.+?)(?=\s+\bKeep the message goal\b|[.!?]?$)/i)?.[1]
+    || rawMessage.match(/\b(?:write|compose|draft)\s+(?:it|this|the email|the note)?\s*(?:in|with)\s+(?:my|the user's)\s+voice\s*(?:[:=-]\s*)?(.+?)(?=\s+\bKeep the message goal\b|[.!?]?$)/i)?.[1];
+  return sanitizeDraftVoiceNotes(explicit || '');
+}
+
 function extractDraftDealNameFromMessage(message) {
   const rawMessage = normalizeWhitespace(message);
   if (!rawMessage || !DRAFT_EMAIL_REQUEST_PATTERN.test(rawMessage)) return null;
@@ -314,7 +376,7 @@ function extractDraftDealNameFromMessage(message) {
   const quoted = rawMessage.match(/["'“”‘’]([^"'“”‘’]{2,160})["'“”‘’]/)?.[1];
   if (quoted) return sanitizeGenericEntityName(quoted);
 
-  const explicit = rawMessage.match(/\b(?:for|on|about|regarding|with respect to|associated with|related to)\s+(.+?)(?=\s+(?:with\s+next\s+steps?|next\s+steps?|including|include|mention|cover|send\s+to|to\s+[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\b|[,.!?]?$)/i);
+  const explicit = rawMessage.match(/\b(?:for|on|about|regarding|with respect to|associated with|related to)\s+(.+?)(?=\s+(?:with\s+next\s+steps?|next\s+steps?|including|include|mention|cover|send\s+to|to\s+[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\b|[,.!?](?:\s|$)|$)/i);
   if (explicit?.[1]) return sanitizeGenericEntityName(explicit[1]);
 
   return null;
@@ -389,6 +451,9 @@ function extractDraftContextFromMessage(message) {
   const rawMessage = normalizeWhitespace(message);
   if (!rawMessage) return null;
 
+  const messageGoal = rawMessage.match(/\bKeep the message goal:\s*(.+?)(?=\s+\bUse these user voice notes\b|[.!?]?$)/i)?.[1];
+  if (messageGoal) return sanitizeDraftContext(messageGoal);
+
   const explicit = rawMessage.match(/\b(?:mention|include|cover|add)\s+(.+?)(?:[.!?]|$)/i)?.[1];
   if (explicit) return sanitizeDraftContext(explicit);
 
@@ -436,6 +501,8 @@ function extractDraftEmailArgsFromMessage(message) {
   const context = extractDraftContextFromMessage(rawMessage);
   const recipientEmail = extractContactEmailFromMessage(rawMessage);
   const recipientName = extractDraftRecipientNameFromMessage(rawMessage);
+  const audienceScope = extractDraftAudienceScopeFromMessage(rawMessage);
+  const voiceNotes = extractDraftVoiceNotesFromMessage(rawMessage);
   const args = {
     email_type: extractDraftEmailTypeFromMessage(rawMessage),
   };
@@ -444,6 +511,8 @@ function extractDraftEmailArgsFromMessage(message) {
   if (context) args.context = context;
   if (recipientName) args.recipient_name = recipientName;
   if (recipientEmail) args.recipient_email = recipientEmail;
+  if (audienceScope) args.audience_scope = audienceScope;
+  if (voiceNotes) args.voice_notes = voiceNotes;
   return args;
 }
 
@@ -1552,6 +1621,8 @@ function extractPendingDraftEmailFromWorkflow(value) {
     context: args.context || result.user_context || result.context || undefined,
     recipient_name: args.recipient_name || result.recipient_name || result.recipientName || undefined,
     recipient_email: args.recipient_email || result.recipient_email || result.recipientEmail || undefined,
+    audience_scope: args.audience_scope || result.audience_scope || result.audienceScope || undefined,
+    voice_notes: args.voice_notes || result.voice_notes || result.voiceNotes || undefined,
     candidate_deals: candidateDeals,
   };
 
@@ -1576,15 +1647,22 @@ export function buildDeterministicPendingDraftEmailPlan(message, conversationHis
 
   const selectedDealName = resolvePendingDraftDealSelection(message, pending.candidate_deals);
   const followUpDealName = selectedDealName || extractPendingDraftDealNameFromMessage(message);
+  const audienceOnly = isAudienceScopeOnlyMessage(message);
   const recipientEmail = extractContactEmailFromMessage(message) || pending.recipient_email || null;
-  const recipientName = extractDraftRecipientNameFromMessage(message) || pending.recipient_name || null;
+  const recipientName = audienceOnly
+    ? pending.recipient_name || null
+    : extractDraftRecipientNameFromMessage(message) || pending.recipient_name || null;
   if (!recipientEmail && !recipientName) return null;
+  const audienceScope = extractDraftAudienceScopeFromMessage(message) || pending.audience_scope || null;
+  const voiceNotes = extractDraftVoiceNotesFromMessage(message) || pending.voice_notes || null;
 
   const followUpContext = selectedDealName
     ? extractDraftContextAfterDealSelection(message)
     : followUpDealName
       ? null
-      : (extractDraftContextFromMessage(message) || sanitizeDraftContext(message));
+      : audienceOnly
+        ? null
+        : (extractDraftContextFromMessage(message) || sanitizeDraftContext(message));
   const context = [pending.context, followUpContext]
     .filter(Boolean)
     .map((value) => String(value).trim())
@@ -1601,6 +1679,8 @@ export function buildDeterministicPendingDraftEmailPlan(message, conversationHis
       context: context || undefined,
       recipient_name: recipientName || undefined,
       recipient_email: recipientEmail || undefined,
+      audience_scope: audienceScope || undefined,
+      voice_notes: voiceNotes || undefined,
     }).filter(([, value]) => value !== undefined && value !== null && value !== '')
   );
 

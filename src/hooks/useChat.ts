@@ -170,6 +170,9 @@ export interface EmailDraftPayload {
   subject: string;
   body: string;
   tone?: string;
+  audience_scope?: 'internal' | 'external';
+  voice_notes?: string;
+  user_context?: string;
   deal_context?: { id: string; name: string; stage: string };
 }
 

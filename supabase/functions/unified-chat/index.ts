@@ -73,6 +73,7 @@ import {
   inferPendingUpdateDealFromHistory,
   inferPendingDraftEmailFromHistory,
   repairScheduleMeetingArgsFromMessage,
+  repairDraftEmailArgsFromMessage,
 } from './intent/deterministic-mutation-planner.mjs';
 import { evaluateClarificationPolicy } from './intent/clarification-policy.mjs';
 import { resolveRetrievalPlan } from './intent/intent-router.mjs';
@@ -163,11 +164,13 @@ const PENDING_DRAFT_EMAIL_CLARIFICATIONS = new Set([
   'missing_recipient_email',
   'missing_communication_context',
   'multiple_deals',
+  'missing_audience_scope',
 ]);
 const PENDING_DRAFT_EMAIL_TYPES = new Set([
   'draft_email_missing_recipient',
   'draft_email_missing_context',
   'draft_email_multiple_deals',
+  'draft_email_missing_audience_scope',
 ]);
 
 function normalizeOrgRole(role: unknown): string {
@@ -273,7 +276,9 @@ async function storePendingDraftEmail(
     ? 'draft_email_missing_context'
     : result.clarification_type === 'multiple_deals'
       ? 'draft_email_multiple_deals'
-      : 'draft_email_missing_recipient';
+      : result.clarification_type === 'missing_audience_scope'
+        ? 'draft_email_missing_audience_scope'
+        : 'draft_email_missing_recipient';
 
   const pendingWorkflow = {
     type,
@@ -287,6 +292,8 @@ async function storePendingDraftEmail(
       recipient_name: result.recipient_name || result.recipientName || null,
       recipient_email: result.recipient_email || result.recipientEmail || null,
       email_type: result.email_type || result.emailType || 'follow_up',
+      audience_scope: result.audience_scope || result.audienceScope || null,
+      voice_notes: result.voice_notes || result.voiceNotes || null,
       user_context: result.user_context || null,
       candidate_deals: Array.isArray(result.candidate_deals) ? result.candidate_deals.slice(0, 5) : [],
     },
@@ -2619,6 +2626,8 @@ const handler = async (req: Request): Promise<Response> => {
         const parsedArgs = safeJsonParse(tc.function?.arguments || '{}') || {};
         const args = toolName === 'schedule_meeting'
           ? repairScheduleMeetingArgsFromMessage(parsedArgs, message)
+          : toolName === 'draft_email'
+            ? repairDraftEmailArgsFromMessage(parsedArgs, message)
           : parsedArgs;
         const isMutation = MUTATION_TOOLS.has(toolName);
         const permissionError = getToolPermissionError(toolName, authorizedOrg?.role);
@@ -2715,6 +2724,9 @@ const handler = async (req: Request): Promise<Response> => {
               subject: result.subject || '',
               body: result.message || result.body || '',
               tone: result.tone || result.emailType || result.email_type || 'professional',
+              audience_scope: result.audienceScope || result.audience_scope || 'external',
+              voice_notes: result.voiceNotes || result.voice_notes || '',
+              user_context: result.user_context || result.context || '',
               deal_context: result.dealContext || result.deal_context || undefined,
             };
           }

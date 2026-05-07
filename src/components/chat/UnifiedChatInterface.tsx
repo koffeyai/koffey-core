@@ -1100,6 +1100,22 @@ export const UnifiedChatInterface: React.FC<UnifiedChatInterfaceProps> = ({
                   <EmailDraftCard
                     draft={msg.emailDraft}
                     onSend={sendEmailDraft}
+                    onApplyVoiceNotes={(draft, voiceNotes) => {
+                      const recipient = draft.to_name
+                        ? `${draft.to_name} <${draft.to_email}>`
+                        : draft.to_email;
+                      const dealSegment = draft.deal_context?.name
+                        ? ` about ${draft.deal_context.name}`
+                        : '';
+                      const audience = draft.audience_scope
+                        ? `${draft.audience_scope}-facing`
+                        : 'external-facing';
+                      const messageGoal = (draft.user_context || draft.body)
+                        .replace(/\s+/g, ' ')
+                        .trim()
+                        .slice(0, 600);
+                      return handleSend(`Draft an ${audience} email to ${recipient}${dealSegment}. Mention ${messageGoal}. Voice notes: ${voiceNotes}`);
+                    }}
                     onCancel={() => handleSend("Cancel the email draft")}
                     disabled={isProcessing}
                   />
