@@ -159,6 +159,16 @@ const WRITE_ROLES = new Set(['owner', 'admin', 'member']);
 const ADMIN_WRITE_ROLES = new Set(['owner', 'admin']);
 const PENDING_DRAFT_EMAIL_MAX_AGE_MS = 30 * 60 * 1000;
 const PENDING_DEAL_UPDATE_MAX_AGE_MS = 30 * 60 * 1000;
+const PENDING_DRAFT_EMAIL_CLARIFICATIONS = new Set([
+  'missing_recipient_email',
+  'missing_communication_context',
+  'multiple_deals',
+]);
+const PENDING_DRAFT_EMAIL_TYPES = new Set([
+  'draft_email_missing_recipient',
+  'draft_email_missing_context',
+  'draft_email_multiple_deals',
+]);
 
 function normalizeOrgRole(role: unknown): string {
   return String(role || '').trim().toLowerCase();
@@ -182,12 +192,14 @@ function getToolPermissionError(toolName: string, role: unknown): string | null 
 }
 
 function normalizePendingDraftWorkflow(value: any): any | null {
-  if (!value || value.type !== 'draft_email_missing_recipient') return null;
+  if (!value || !PENDING_DRAFT_EMAIL_TYPES.has(value.type)) return null;
   if (typeof value.userPrompt !== 'string' || typeof value.assistantPrompt !== 'string') return null;
   return {
-    type: 'draft_email_missing_recipient',
+    type: value.type,
     userPrompt: value.userPrompt,
     assistantPrompt: value.assistantPrompt,
+    args: value.args && typeof value.args === 'object' ? value.args : null,
+    result: value.result && typeof value.result === 'object' ? value.result : null,
   };
 }
 
@@ -250,16 +262,34 @@ async function storePendingDraftEmail(
   sessionId: string | undefined,
   sessionTable: 'chat_sessions' | 'messaging_sessions',
   userPrompt: string,
+  args: any,
   result: any,
 ) {
-  if (!sessionId || !result?._needsInput || result?.clarification_type !== 'missing_recipient_email') return;
+  if (!sessionId || !result?._needsInput || !PENDING_DRAFT_EMAIL_CLARIFICATIONS.has(result?.clarification_type)) return;
   const assistantPrompt = String(result.message || '').trim();
   if (!assistantPrompt) return;
 
+  const type = result.clarification_type === 'missing_communication_context'
+    ? 'draft_email_missing_context'
+    : result.clarification_type === 'multiple_deals'
+      ? 'draft_email_multiple_deals'
+      : 'draft_email_missing_recipient';
+
   const pendingWorkflow = {
-    type: 'draft_email_missing_recipient',
+    type,
     userPrompt: String(userPrompt || ''),
     assistantPrompt,
+    args: args && typeof args === 'object' ? args : {},
+    result: {
+      deal_id: result.deal_id || null,
+      deal_name: result.deal_name || null,
+      account_name: result.account_name || null,
+      recipient_name: result.recipient_name || result.recipientName || null,
+      recipient_email: result.recipient_email || result.recipientEmail || null,
+      email_type: result.email_type || result.emailType || 'follow_up',
+      user_context: result.user_context || null,
+      candidate_deals: Array.isArray(result.candidate_deals) ? result.candidate_deals.slice(0, 5) : [],
+    },
   };
 
   const { error } = await supabase
@@ -817,7 +847,13 @@ const handler = async (req: Request): Promise<Response> => {
     }
     if (
       effectivePendingWorkflow
-      && !normalizedHistory.some((m: any) => /need a recipient email before it becomes actionable/i.test(String(m?.content || '')))
+      && !normalizedHistory.some((m: any) => {
+        const content = String(m?.content || '');
+        const assistantPrompt = String(effectivePendingWorkflow.assistantPrompt || '').slice(0, 80);
+        return assistantPrompt
+          ? content.includes(assistantPrompt)
+          : /need a recipient email before it becomes actionable|what should the note (?:say|communicate)|which one should i use/i.test(content);
+      })
     ) {
       normalizedHistory.push(
         { role: 'user', content: effectivePendingWorkflow.userPrompt },
@@ -2048,9 +2084,9 @@ const handler = async (req: Request): Promise<Response> => {
     const deterministicPendingScheduleMeetingPlan = !shouldDeferDeterministicMutationFallback
       ? buildDeterministicPendingScheduleMeetingPlan(message, effectivePendingScheduleMeeting, allowedToolNames)
       : null;
-    const hasExplicitPendingDraftEmailWorkflow = effectivePendingWorkflow?.type === 'draft_email_missing_recipient';
+    const hasExplicitPendingDraftEmailWorkflow = PENDING_DRAFT_EMAIL_TYPES.has(effectivePendingWorkflow?.type);
     const deterministicPendingDraftEmailPlan = (!shouldDeferDeterministicMutationFallback || hasExplicitPendingDraftEmailWorkflow)
-      ? buildDeterministicPendingDraftEmailPlan(message, normalizedHistory, allowedToolNames)
+      ? buildDeterministicPendingDraftEmailPlan(message, normalizedHistory, allowedToolNames, effectivePendingWorkflow)
       : null;
 
     const liveForcedToolPlan = !shouldBypassPipelineRetrievalForMutation && shouldUseLiveForcedRetrievalPlan({
@@ -2780,7 +2816,7 @@ const handler = async (req: Request): Promise<Response> => {
         const pendingDraftEmailOp = crmOperations.find(({ tool, result }) => (
           tool === 'draft_email'
           && result?._needsInput
-          && result?.clarification_type === 'missing_recipient_email'
+          && PENDING_DRAFT_EMAIL_CLARIFICATIONS.has(result?.clarification_type)
         ));
         if (successfulDraftEmailOp) {
           await clearPendingDraftEmail(admin, validation.sanitizedData.sessionId, sessionTable);
@@ -2790,6 +2826,7 @@ const handler = async (req: Request): Promise<Response> => {
             validation.sanitizedData.sessionId,
             sessionTable,
             message,
+            pendingDraftEmailOp.args || {},
             pendingDraftEmailOp.result,
           );
         }

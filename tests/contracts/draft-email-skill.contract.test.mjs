@@ -27,7 +27,7 @@ class QueryMock {
   }
 
   result() {
-    if (this.table === 'deals') return { data: this.state.deal, error: null };
+    if (this.table === 'deals') return { data: this.state.deals || this.state.deal, error: null };
     if (this.table === 'contacts') {
       const isAccountContactLookup = String(this.filters.or || '').includes('company.ilike')
         || String(this.filters.or || '').includes('account_id.eq');
@@ -184,6 +184,80 @@ test('draft_email asks for recipient details before creating an unsendable draft
   assert.equal(result.isDraft, undefined);
   assert.match(result.message, /need a recipient email/i);
   assert.match(result.follow_up_prompt, /recipient name\/email/i);
+});
+
+test('draft_email asks which deal to use when a deal name is ambiguous', async () => {
+  const result = await draftEmail.execute({
+    supabase: buildSupabaseMock({
+      deals: [
+        {
+          id: 'deal-5a',
+          name: 'Northstar Expansion Smoke 1',
+          stage: 'negotiation',
+          amount: 75000,
+          expected_close_date: '2026-06-20',
+          accounts: { name: 'Northstar Robotics' },
+        },
+        {
+          id: 'deal-5b',
+          name: 'Northstar Expansion for Northstar Robotics',
+          stage: 'negotiation',
+          amount: 75000,
+          expected_close_date: '2026-06-30',
+          accounts: { name: 'Northstar Robotics' },
+        },
+      ],
+      activities: [],
+    }),
+    organizationId: 'org-1',
+    userId: 'user-1',
+    args: {
+      recipient_email: 'buyer@example.com',
+      email_type: 'follow_up',
+      deal_name: 'Northstar Expansion',
+      tone: 'professional',
+    },
+    entityContext: {},
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result._needsInput, true);
+  assert.equal(result.clarification_type, 'multiple_deals');
+  assert.match(result.message, /Which one should I use/i);
+  assert.match(result.message, /Northstar Expansion Smoke 1/);
+  assert.match(result.message, /what the note should communicate/i);
+  assert.equal(result.isDraft, undefined);
+});
+
+test('draft_email asks what the note should communicate before drafting', async () => {
+  const result = await draftEmail.execute({
+    supabase: buildSupabaseMock({
+      deal: {
+        id: 'deal-6',
+        name: 'Northstar Expansion for Northstar Robotics',
+        stage: 'negotiation',
+        amount: 75000,
+        expected_close_date: '2026-06-30',
+        accounts: { name: 'Northstar Robotics' },
+      },
+      activities: [],
+    }),
+    organizationId: 'org-1',
+    userId: 'user-1',
+    args: {
+      recipient_email: 'buyer@example.com',
+      email_type: 'follow_up',
+      deal_name: 'Northstar Expansion for Northstar Robotics',
+      tone: 'professional',
+    },
+    entityContext: {},
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result._needsInput, true);
+  assert.equal(result.clarification_type, 'missing_communication_context');
+  assert.match(result.message, /what it should communicate/i);
+  assert.equal(result.isDraft, undefined);
 });
 
 test('draft_email can use account contacts when no deal stakeholder is linked', async () => {

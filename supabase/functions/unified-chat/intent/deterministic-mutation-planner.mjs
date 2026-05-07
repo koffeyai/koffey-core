@@ -41,8 +41,8 @@ const UPDATE_ACCOUNT_RENAME_EXPLICIT_PATTERN = /\b(?:rename|change|update)\b(?:\
 const UPDATE_ACCOUNT_RENAME_WITH_ACCOUNT_PATTERN = /\b(?:rename|change|update)\b(?:\s+(?:the|this|an?|my))?\s+account(?:\s+name)?\s+(?:for|from)?\s*(.+?)\s+to\s+(.+?)(?:[.?!]|$)/i;
 const UPDATE_ACCOUNT_NOT_FOUND_PATTERN = /\bi couldn't find an account matching\b/i;
 const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
-const DRAFT_EMAIL_REQUEST_PATTERN = /\b(?:draft|write|compose|create)\b[\s\S]*\b(?:email|message)\b/i;
-const PENDING_DRAFT_EMAIL_ASSISTANT_PATTERN = /\bdraft_email\b[\s\S]*\bneed a recipient email\b|\bneed a recipient email before it becomes actionable\b/i;
+const DRAFT_EMAIL_REQUEST_PATTERN = /\b(?:draft|write|compose|create|send)\b[\s\S]*\b(?:email|message|note|follow[\s-]?up|reply)\b/i;
+const PENDING_DRAFT_EMAIL_ASSISTANT_PATTERN = /\bdraft_email\b[\s\S]*\bneed a recipient email\b|\bneed a recipient email before it becomes actionable\b|\bwhat should the note (?:say|communicate)\b|\bwhat it should communicate\b|\bi found \d+ matching deals\b[\s\S]*\bwhich one should i use\b/i;
 const SEQUENCE_FILLER_PATTERN = /\b(?:use|the|sequence|cadence|please|thanks|thank\s+you|for|to|in|on)\b/gi;
 const DELETE_CONFIRMATION_PATTERN = /^(?:yes|yep|yeah|confirm|confirmed|proceed|delete it|remove it|go ahead|do it|permanently delete it)[\s.!?]*$/i;
 const PENDING_DELETE_ASSISTANT_PATTERN = /\bpermanently delete\b[\s\S]*\breply\s+["']?yes["']?\s+to\s+confirm deletion\b/i;
@@ -314,10 +314,65 @@ function extractDraftDealNameFromMessage(message) {
   const quoted = rawMessage.match(/["'“”‘’]([^"'“”‘’]{2,160})["'“”‘’]/)?.[1];
   if (quoted) return sanitizeGenericEntityName(quoted);
 
-  const explicit = rawMessage.match(/\b(?:for|on|about|regarding)\s+(.+?)(?=\s+(?:with\s+next\s+steps?|next\s+steps?|including|include|mention|cover|send\s+to|to\s+[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\b|[,.!?]?$)/i);
+  const explicit = rawMessage.match(/\b(?:for|on|about|regarding|with respect to|associated with|related to)\s+(.+?)(?=\s+(?:with\s+next\s+steps?|next\s+steps?|including|include|mention|cover|send\s+to|to\s+[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\b|[,.!?]?$)/i);
   if (explicit?.[1]) return sanitizeGenericEntityName(explicit[1]);
 
   return null;
+}
+
+function extractPendingDraftDealNameFromMessage(message) {
+  const rawMessage = normalizeWhitespace(message);
+  if (!rawMessage) return null;
+
+  const explicit = rawMessage.match(/\b(?:with respect to|regarding|about|for|on|associated with|related to)\s+(?:the\s+)?(.+?)(?=\s*(?:,|;|[.!?]|$))/i);
+  if (!explicit?.[1]) return null;
+
+  const cleaned = String(explicit[1] || '')
+    .replace(/\s+(?:deal|deals|opportunity|opportunities)$/i, '')
+    .trim();
+  return sanitizeGenericEntityName(cleaned);
+}
+
+function parsePendingDraftDealOptions(assistantContent) {
+  const lines = String(assistantContent || '').split(/\n+/);
+  const options = [];
+  for (const line of lines) {
+    const match = line.match(/^\s*(?:-\s*)?(\d+)\.\s+(.+?)(?:\s+\(|\s+Also tell\b|$)/);
+    if (!match?.[1] || !match?.[2]) continue;
+    const name = sanitizeGenericEntityName(match[2]);
+    if (!name) continue;
+    options.push({ index: Number(match[1]), name });
+  }
+  return options;
+}
+
+function resolvePendingDraftDealSelection(message, candidateDeals = []) {
+  const rawMessage = normalizeWhitespace(message);
+  if (!rawMessage || !Array.isArray(candidateDeals) || candidateDeals.length === 0) return null;
+
+  const numberMatch = rawMessage.match(/^(?:use|pick|choose|select)?\s*#?(\d+)\b/i);
+  if (numberMatch?.[1]) {
+    const selected = candidateDeals.find((deal) => Number(deal.index) === Number(numberMatch[1]));
+    if (selected?.name) return selected.name;
+  }
+
+  const lower = rawMessage.toLowerCase();
+  const selected = candidateDeals.find((deal) => {
+    const name = String(deal?.name || '').toLowerCase();
+    return name && (lower.includes(name) || name.includes(lower));
+  });
+  return selected?.name || null;
+}
+
+function extractDraftContextAfterDealSelection(message) {
+  const rawMessage = normalizeWhitespace(message);
+  if (!rawMessage) return null;
+
+  const stripped = rawMessage
+    .replace(/^(?:use|pick|choose|select)?\s*#?\d+\s*(?:[).:,-]\s*)?/i, '')
+    .trim();
+  if (!stripped || stripped === rawMessage) return null;
+  return extractDraftContextFromMessage(stripped) || sanitizeDraftContext(stripped);
 }
 
 function extractDraftEmailTypeFromMessage(message) {
@@ -339,6 +394,22 @@ function extractDraftContextFromMessage(message) {
 
   if (/\bnext\s+steps?\b/i.test(rawMessage)) return 'next steps';
   return null;
+}
+
+function isVagueDraftContext(value) {
+  const cleaned = normalizeWhitespace(value).toLowerCase().replace(/[^\w\s-]/g, '').trim();
+  return !cleaned || [
+    'send a note',
+    'write a note',
+    'draft a note',
+    'send note',
+    'write note',
+    'note',
+    'message',
+    'email',
+    'follow up',
+    'check in',
+  ].includes(cleaned);
 }
 
 function extractDraftRecipientNameFromMessage(message) {
@@ -363,12 +434,16 @@ function extractDraftEmailArgsFromMessage(message) {
 
   const dealName = extractDraftDealNameFromMessage(rawMessage);
   const context = extractDraftContextFromMessage(rawMessage);
+  const recipientEmail = extractContactEmailFromMessage(rawMessage);
+  const recipientName = extractDraftRecipientNameFromMessage(rawMessage);
   const args = {
     email_type: extractDraftEmailTypeFromMessage(rawMessage),
   };
   if (dealName) args.deal_name = dealName;
   if (dealName) args.account_name = dealName.replace(/\s+-\s+\$[\d,.]+(?:\.\d+)?\s*[kmb]?$/i, '').trim();
   if (context) args.context = context;
+  if (recipientName) args.recipient_name = recipientName;
+  if (recipientEmail) args.recipient_email = recipientEmail;
   return args;
 }
 
@@ -1429,6 +1504,7 @@ export function inferPendingDraftEmailFromHistory(conversationHistory = []) {
     if (!PENDING_DRAFT_EMAIL_ASSISTANT_PATTERN.test(assistantContent)) continue;
 
     const toolDealName = assistantContent.match(/\bfor\s+(.+?),\s+but i need a recipient email/i)?.[1];
+    const candidateDeals = parsePendingDraftDealOptions(assistantMessage?.content || '');
 
     for (let j = i - 1; j >= 0; j -= 1) {
       const userMessage = history[j];
@@ -1440,6 +1516,7 @@ export function inferPendingDraftEmailFromHistory(conversationHistory = []) {
       return {
         ...draftArgs,
         deal_name: draftArgs.deal_name || sanitizeGenericEntityName(toolDealName || ''),
+        candidate_deals: candidateDeals,
       };
     }
 
@@ -1447,6 +1524,7 @@ export function inferPendingDraftEmailFromHistory(conversationHistory = []) {
       return {
         email_type: 'follow_up',
         deal_name: sanitizeGenericEntityName(toolDealName),
+        candidate_deals: candidateDeals,
       };
     }
   }
@@ -1454,27 +1532,70 @@ export function inferPendingDraftEmailFromHistory(conversationHistory = []) {
   return null;
 }
 
-export function buildDeterministicPendingDraftEmailPlan(message, conversationHistory, allowedToolNames = new Set()) {
+function extractPendingDraftEmailFromWorkflow(value) {
+  if (!value || typeof value !== 'object') return null;
+
+  const args = value.args && typeof value.args === 'object' ? value.args : {};
+  const result = value.result && typeof value.result === 'object' ? value.result : {};
+  const candidateDeals = Array.isArray(result.candidate_deals)
+    ? result.candidate_deals.map((deal, index) => ({
+      index: Number(deal?.index || index + 1),
+      name: sanitizeGenericEntityName(deal?.name || ''),
+    })).filter((deal) => deal.name)
+    : [];
+
+  const pending = {
+    email_type: args.email_type || result.email_type || result.emailType || 'follow_up',
+    deal_id: args.deal_id || result.deal_id || undefined,
+    deal_name: args.deal_name || result.deal_name || undefined,
+    account_name: args.account_name || result.account_name || undefined,
+    context: args.context || result.user_context || result.context || undefined,
+    recipient_name: args.recipient_name || result.recipient_name || result.recipientName || undefined,
+    recipient_email: args.recipient_email || result.recipient_email || result.recipientEmail || undefined,
+    candidate_deals: candidateDeals,
+  };
+
+  return Object.values(pending).some(Boolean) ? pending : null;
+}
+
+export function buildDeterministicPendingDraftEmailPlan(message, conversationHistory, allowedToolNames = new Set(), pendingWorkflow = null) {
   const toolNames = allowedToolNames instanceof Set ? allowedToolNames : new Set(allowedToolNames || []);
   if (!toolNames.has('draft_email')) return null;
 
-  const pending = inferPendingDraftEmailFromHistory(conversationHistory);
-  if (!pending?.deal_name && !pending?.account_name) return null;
+  const workflowPending = extractPendingDraftEmailFromWorkflow(pendingWorkflow);
+  const historyPending = inferPendingDraftEmailFromHistory(conversationHistory);
+  const pending = {
+    ...(historyPending || {}),
+    ...(workflowPending || {}),
+    candidate_deals: [
+      ...((historyPending?.candidate_deals || [])),
+      ...((workflowPending?.candidate_deals || [])),
+    ],
+  };
+  if (!pending?.deal_name && !pending?.account_name && !pending?.recipient_email && !pending?.recipient_name) return null;
 
-  const recipientEmail = extractContactEmailFromMessage(message);
-  const recipientName = extractDraftRecipientNameFromMessage(message);
+  const selectedDealName = resolvePendingDraftDealSelection(message, pending.candidate_deals);
+  const followUpDealName = selectedDealName || extractPendingDraftDealNameFromMessage(message);
+  const recipientEmail = extractContactEmailFromMessage(message) || pending.recipient_email || null;
+  const recipientName = extractDraftRecipientNameFromMessage(message) || pending.recipient_name || null;
   if (!recipientEmail && !recipientName) return null;
 
-  const followUpContext = extractDraftContextFromMessage(message);
+  const followUpContext = selectedDealName
+    ? extractDraftContextAfterDealSelection(message)
+    : followUpDealName
+      ? null
+      : (extractDraftContextFromMessage(message) || sanitizeDraftContext(message));
   const context = [pending.context, followUpContext]
     .filter(Boolean)
     .map((value) => String(value).trim())
+    .filter((value) => !isVagueDraftContext(value))
     .filter((value, index, values) => value && values.indexOf(value) === index)
     .join('; ');
 
   const args = Object.fromEntries(
     Object.entries({
-      deal_name: pending.deal_name,
+      deal_id: pending.deal_id,
+      deal_name: followUpDealName || pending.deal_name,
       account_name: pending.account_name,
       email_type: pending.email_type || 'follow_up',
       context: context || undefined,

@@ -295,7 +295,9 @@ export function buildToolOnlyResponseForMessage(operations, message = '') {
             ? 'I need a loss reason before I can complete that.'
             : 'I need a bit more information before I can complete that.')
       ).trim();
-      const trimmed = message.length > 220 ? `${message.slice(0, 217)}...` : message;
+      const preserveFullPrompt = op?.result?.clarification_type === 'multiple_deals'
+        || op?.result?.clarification_type === 'missing_communication_context';
+      const trimmed = !preserveFullPrompt && message.length > 220 ? `${message.slice(0, 217)}...` : message;
       lines.push(`- ${op.tool}: ${trimmed}`);
       continue;
     }

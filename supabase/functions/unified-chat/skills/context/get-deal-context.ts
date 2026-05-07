@@ -116,7 +116,6 @@ async function buildMultipleDealContext(
   }
 
   const stakeholdersByDeal = new Map<string, any[]>();
-  const citationRows: any[] = [];
   for (const row of stakeholderRows || []) {
     const contact = (row as any).contact || {};
     const enriched = {
@@ -133,11 +132,10 @@ async function buildMultipleDealContext(
     };
     if (!stakeholdersByDeal.has((row as any).deal_id)) stakeholdersByDeal.set((row as any).deal_id, []);
     stakeholdersByDeal.get((row as any).deal_id)!.push(enriched);
-    citationRows.push({ ...enriched, __contextTable: 'contacts' });
   }
 
   const shapedDeals = (dealRows || []).map((deal: any) => {
-    const shaped = {
+    return {
       id: deal.id,
       name: deal.name,
       amount: deal.amount,
@@ -155,29 +153,27 @@ async function buildMultipleDealContext(
       created_at: deal.created_at,
       updated_at: deal.updated_at,
     };
-    citationRows.push({
-      id: shaped.id,
-      name: shaped.name,
-      amount: shaped.amount,
-      stage: shaped.stage,
-      probability: shaped.probability,
-      close_date: shaped.close_date,
-      __contextTable: 'deals',
-    });
-    return shaped;
+  });
+
+  const optionLines = shapedDeals.slice(0, 5).map((deal: any, index: number) => {
+    const facts = [
+      deal.stage ? `stage ${deal.stage}` : '',
+      typeof deal.amount === 'number' ? `$${deal.amount.toLocaleString('en-US')}` : '',
+      deal.close_date ? `close ${deal.close_date}` : '',
+      deal.account?.name ? `account ${deal.account.name}` : '',
+    ].filter(Boolean);
+    return `${index + 1}. ${deal.name || deal.id}${facts.length ? ` (${facts.join(', ')})` : ''}`;
   });
 
   return {
-    success: true,
+    success: false,
+    _needsInput: true,
+    clarification_type: 'multiple_deals',
     multiple_deals: true,
     label,
     deals: shapedDeals,
-    __citationRows: citationRows,
-    __trusted_context: true,
-    _meta: {
-      source_tables: ['deals', 'accounts', 'deal_contacts', 'contacts'],
-      queried_at: new Date().toISOString(),
-    },
+    message: `I found ${shapedDeals.length} matching deals for "${label}". Which one should I use?\n${optionLines.join('\n')}`,
+    follow_up_prompt: 'Reply with the deal name or number.',
   };
 }
 

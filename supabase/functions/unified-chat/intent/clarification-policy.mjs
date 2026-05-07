@@ -87,7 +87,9 @@ export function evaluateClarificationPolicy(contract, retrievalPlan, context = {
       return { needsClarification: false };
     }
 
-    const draftingTarget = contract?.entityType === 'deal' || contract?.entityType === 'contact' || resolvedEntity;
+    const hasRecipientCue = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i.test(currentMessage)
+      || /\b(?:note|message|email|follow[\s-]?up)\s+to\b/i.test(currentMessage);
+    const draftingTarget = contract?.entityType === 'deal' || contract?.entityType === 'contact' || resolvedEntity || hasRecipientCue;
     if (!contract?.entityHint && !contract?.entityId && !draftingTarget) {
       return {
         needsClarification: true,

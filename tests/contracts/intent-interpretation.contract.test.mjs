@@ -257,6 +257,14 @@ test('interpretMessageIntentHeuristic treats closable-quarter asks as pipeline w
   assert.equal(contract.resolvedTimeRange?.end, '2026-03-31');
 });
 
+test('interpretMessageIntentHeuristic treats send-a-note requests as drafting, not CRM mutation', () => {
+  const contract = interpretMessageIntentHeuristic('send a note to buyer@example.com, its associated with northstar robotics');
+
+  assert.equal(contract.intent, 'drafting');
+  assert.equal(contract.executionPath, 'standard');
+  assert.equal(contract.domains.includes('intelligence'), true);
+});
+
 const NORMALIZE_CASES = [
   { input: 'coca cola deal', options: { entityType: 'deal' }, expected: 'coca cola' },
   { input: 'the Acme Corp', options: { entityType: 'deal' }, expected: 'Acme Corp' },

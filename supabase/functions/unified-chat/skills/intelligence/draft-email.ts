@@ -111,6 +111,13 @@ function stripDealAmountSuffix(value: unknown): string {
   return cleanLookupCandidate(value).replace(/\s+-\s+\$[\d,.]+(?:\.\d+)?\s*[KMBkmb]?$/i, '').trim();
 }
 
+function normalizeDealMatchValue(value: unknown): string {
+  return stripDealAmountSuffix(value)
+    .replace(/\s+(?:deal|deals|opportunity|opportunities)$/i, '')
+    .toLowerCase()
+    .trim();
+}
+
 function sanitizeOrFilterValue(value: unknown): string {
   return String(value || '').replace(/[%*,]/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -124,6 +131,81 @@ function formatContextForEmail(value: string): string {
     .replace(/[.!?]+$/g, '')
     .trim();
   return cleaned;
+}
+
+function isMissingCommunicationContext(value: unknown): boolean {
+  const cleaned = formatContextForEmail(String(value || ''));
+  if (!cleaned || cleaned.length < 8) return true;
+
+  const vague = cleaned.toLowerCase().replace(/[^\w\s-]/g, '').trim();
+  return [
+    'follow up',
+    'check in',
+    'next step',
+    'next steps',
+    'move this forward',
+    'advance the deal',
+    'advance this deal',
+    'keep momentum',
+    'touch base',
+    'send a note',
+    'write a note',
+    'send message',
+    'regarding this deal',
+    'about this deal',
+  ].includes(vague);
+}
+
+function formatDealOption(deal: Record<string, unknown>, index: number): string {
+  const facts = [
+    firstNonEmpty(deal.stage) ? `stage ${firstNonEmpty(deal.stage)}` : '',
+    formatMoney(deal.amount),
+    formatCloseDate(deal.expected_close_date),
+    extractJoinedName((deal as any).accounts, 'name') ? `account ${extractJoinedName((deal as any).accounts, 'name')}` : '',
+  ].filter(Boolean);
+  return `${index + 1}. ${firstNonEmpty(deal.name, deal.id)}${facts.length ? ` (${facts.join(', ')})` : ''}`;
+}
+
+function buildMultipleDealClarification(params: {
+  result: Record<string, unknown>;
+  deals: Array<Record<string, unknown>>;
+  label: string;
+  userContext?: string;
+  recipientName?: string;
+  recipientEmail?: string;
+  emailType?: string;
+  accountName?: string;
+}) {
+  const optionLines = params.deals.slice(0, 5).map(formatDealOption);
+  const needsContext = isMissingCommunicationContext(params.userContext);
+  const contextQuestion = needsContext
+    ? '\n\nAlso tell me what the note should communicate.'
+    : '';
+  return {
+    ...params.result,
+    success: false,
+    _needsInput: true,
+    clarification_type: 'multiple_deals',
+    multiple_deals: true,
+    candidate_deals: params.deals.map((deal) => ({
+      id: firstNonEmpty(deal.id),
+      name: firstNonEmpty(deal.name),
+      stage: firstNonEmpty(deal.stage),
+      amount: deal.amount ?? null,
+      expected_close_date: deal.expected_close_date ?? null,
+      account_name: extractJoinedName((deal as any).accounts, 'name') || null,
+    })),
+    deal_name: params.label,
+    recipient_name: params.recipientName || null,
+    recipient_email: params.recipientEmail || null,
+    email_type: params.emailType || 'follow_up',
+    account_name: params.accountName || null,
+    user_context: params.userContext || null,
+    message: `I found ${params.deals.length} matching deals for "${params.label}". Which one should I use?\n${optionLines.join('\n')}${contextQuestion}`,
+    follow_up_prompt: needsContext
+      ? 'Reply with the deal name or number and what the note should say.'
+      : 'Reply with the deal name or number.',
+  };
 }
 
 function buildDraftSubject(emailType: string, deal: Record<string, unknown> | null, accountName: string, context: string): string {
@@ -322,10 +404,32 @@ Always include a clear subject line and call-to-action.`,
           .select('id, name, stage, amount, expected_close_date, probability, description, competitor_name, key_use_case, accounts(id, name), contacts(full_name, email, company)')
           .eq('organization_id', organizationId)
           .ilike('name', `%${candidate}%`)
-          .limit(1)
-          .single();
+          .limit(5);
+        const matches = asArray(data);
+        if (matches.length === 1) {
+          deal = matches[0];
+          break;
+        }
+        if (matches.length > 1) {
+          const normalizedCandidate = normalizeDealMatchValue(candidate);
+          const exactMatches = matches.filter((row) => normalizeDealMatchValue(row.name) === normalizedCandidate);
+          if (exactMatches.length === 1) {
+            deal = exactMatches[0];
+            break;
+          }
+          return buildMultipleDealClarification({
+            result,
+            deals: matches,
+            label: candidate,
+            userContext,
+            recipientName: recipient_name,
+            recipientEmail: recipient_email,
+            emailType: email_type,
+            accountName: account_name,
+          });
+        }
         if (data) {
-          deal = data;
+          deal = data as Record<string, unknown>;
           break;
         }
       }
@@ -516,6 +620,27 @@ Always include a clear subject line and call-to-action.`,
         deal_name: (deal as any)?.name || deal_name || null,
         message,
         follow_up_prompt: 'Reply with the recipient name/email and any notes to include, and I will create the draft.',
+      };
+    }
+
+    if (isMissingCommunicationContext(userContext)) {
+      const dealLabel = firstNonEmpty((deal as any)?.name, deal_name, resolvedAccountName, 'this opportunity');
+      const recipientLabel = resolvedRecipientName && resolvedRecipientName !== 'there'
+        ? resolvedRecipientName
+        : resolvedRecipientEmail;
+      return {
+        ...result,
+        success: false,
+        _needsInput: true,
+        clarification_type: 'missing_communication_context',
+        deal_id: (deal as any)?.id || null,
+        deal_name: (deal as any)?.name || deal_name || null,
+        account_name: resolvedAccountName || null,
+        recipient_name: recipientLabel || null,
+        recipient_email: resolvedRecipientEmail,
+        email_type: resolvedEmailType,
+        message: `I can draft the note${recipientLabel ? ` to ${recipientLabel}` : ''}${dealLabel ? ` about ${dealLabel}` : ''}, but I need to know what it should communicate. What should the note say or ask for?`,
+        follow_up_prompt: 'Reply with the message goal/details, and I will create the draft.',
       };
     }
 

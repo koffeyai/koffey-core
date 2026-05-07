@@ -1221,3 +1221,82 @@ test('buildDeterministicPendingDraftEmailPlan resumes recipient email follow-ups
     },
   );
 });
+
+test('buildDeterministicPendingDraftEmailPlan resumes missing communication context', () => {
+  const plan = buildDeterministicPendingDraftEmailPlan(
+    'Recap the security review, ask who owns budget approval, and propose a Tuesday implementation call.',
+    [
+      { role: 'user', content: 'send a note to buyer@example.com about Northstar Expansion for Northstar Robotics' },
+      { role: 'assistant', content: 'Action status:\n- draft_email: I can draft the note to buyer@example.com about Northstar Expansion for Northstar Robotics, but I need to know what it should communicate. What should the note say or ask for?' },
+    ],
+    new Set(['draft_email']),
+    {
+      type: 'draft_email_missing_context',
+      userPrompt: 'send a note to buyer@example.com about Northstar Expansion for Northstar Robotics',
+      assistantPrompt: 'I can draft the note to buyer@example.com about Northstar Expansion for Northstar Robotics, but I need to know what it should communicate. What should the note say or ask for?',
+      args: {
+        recipient_email: 'buyer@example.com',
+        deal_name: 'Northstar Expansion for Northstar Robotics',
+        email_type: 'follow_up',
+      },
+      result: {
+        recipient_email: 'buyer@example.com',
+        deal_name: 'Northstar Expansion for Northstar Robotics',
+        email_type: 'follow_up',
+      },
+    },
+  );
+
+  assert.equal(plan?.provider, 'deterministic');
+  assert.deepEqual(
+    JSON.parse(plan.toolCalls[0].function.arguments),
+    {
+      deal_name: 'Northstar Expansion for Northstar Robotics',
+      email_type: 'follow_up',
+      context: 'Recap the security review, ask who owns budget approval, and propose a Tuesday implementation call',
+      recipient_email: 'buyer@example.com',
+    },
+  );
+});
+
+test('buildDeterministicPendingDraftEmailPlan resumes multiple-deal selections before drafting', () => {
+  const plan = buildDeterministicPendingDraftEmailPlan(
+    '2. Recap the implementation timeline and ask who owns budget approval.',
+    [
+      { role: 'user', content: 'send a note to buyer@example.com about Northstar Expansion' },
+      { role: 'assistant', content: 'Action status:\n- draft_email: I found 2 matching deals for "Northstar Expansion". Which one should I use?\n1. Northstar Expansion Smoke 1\n2. Northstar Expansion for Northstar Robotics Also tell me what the note should communicate.' },
+    ],
+    new Set(['draft_email']),
+    {
+      type: 'draft_email_multiple_deals',
+      userPrompt: 'send a note to buyer@example.com about Northstar Expansion',
+      assistantPrompt: 'I found 2 matching deals for "Northstar Expansion". Which one should I use?',
+      args: {
+        recipient_email: 'buyer@example.com',
+        deal_name: 'Northstar Expansion',
+        email_type: 'follow_up',
+      },
+      result: {
+        recipient_email: 'buyer@example.com',
+        deal_name: 'Northstar Expansion',
+        email_type: 'follow_up',
+        user_context: 'send a note',
+        candidate_deals: [
+          { id: 'deal-1', name: 'Northstar Expansion Smoke 1' },
+          { id: 'deal-2', name: 'Northstar Expansion for Northstar Robotics' },
+        ],
+      },
+    },
+  );
+
+  assert.equal(plan?.provider, 'deterministic');
+  assert.deepEqual(
+    JSON.parse(plan.toolCalls[0].function.arguments),
+    {
+      deal_name: 'Northstar Expansion for Northstar Robotics',
+      email_type: 'follow_up',
+      context: 'Recap the implementation timeline and ask who owns budget approval',
+      recipient_email: 'buyer@example.com',
+    },
+  );
+});

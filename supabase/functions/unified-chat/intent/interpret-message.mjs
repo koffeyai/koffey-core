@@ -38,6 +38,7 @@ const MESSAGE_HISTORY_PATTERNS = [
 ];
 const DRAFTING_PATTERNS = [
   /\b(draft|compose|write)\b.*\b(email|message|follow[\s-]?up|reply)\b/i,
+  /\b(?:send|write|draft|compose)\s+(?:a\s+)?(?:note|message|email|follow[\s-]?up)\s+to\b/i,
   /\bwrite something to move this deal forward\b/i,
 ];
 const NEXT_STEP_GUIDANCE_PATTERNS = [

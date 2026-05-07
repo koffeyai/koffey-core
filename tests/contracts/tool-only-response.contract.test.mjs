@@ -75,14 +75,17 @@ test('tool-only response includes deal stakeholders and power-rank labels', () =
   assert.match(response, /Finance Reviewer - Tactical Blocker \(Peripheral\)/);
 });
 
-test('tool-only response summarizes multiple matching deal contexts', () => {
+test('tool-only response asks for deal selection on multiple matching deal contexts', () => {
   const response = buildToolOnlyResponse([
     {
       tool: 'get_deal_context',
       result: {
-        success: true,
+        success: false,
+        _needsInput: true,
+        clarification_type: 'multiple_deals',
         multiple_deals: true,
         label: 'acme',
+        message: 'I found 2 matching deals for "acme". Which one should I use?\n1. acme - $35K (stage prospecting)\n2. acme - $20K (stage qualified)',
         deals: [
           {
             id: 'deal_1',
@@ -107,11 +110,10 @@ test('tool-only response summarizes multiple matching deal contexts', () => {
     },
   ]);
 
-  assert.match(response, /2 matching opportunities for acme/);
+  assert.match(response, /Which one should I use/);
   assert.match(response, /acme - \$35K/);
-  assert.match(response, /Pat Rivera - Champion \(Influential\)/);
   assert.match(response, /acme - \$20K/);
-  assert.match(response, /no stakeholders linked yet/);
+  assert.doesNotMatch(response, /Deal context/);
 });
 
 test('tool-only response prefers cited task rows over canned task message', () => {
