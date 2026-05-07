@@ -32,6 +32,24 @@ test('email sync creates CRM activities for any matched CRM record', () => {
   assert.match(activitySection, /completed:\s*true/);
 });
 
+test('email sync notifies on bounces instead of dropping delivery failures', () => {
+  const source = read('supabase/functions/sync-email-to-crm/index.ts');
+  const providerSource = read('supabase/functions/_shared/email-provider-gmail.ts');
+  const sendAuditMigration = read('supabase/migrations/20260507124500_add_email_bounce_tracking.sql');
+
+  assert.match(providerSource, /BOUNCE_SENDER_PATTERN/);
+  assert.match(providerSource, /BOUNCE_SUBJECT_PATTERN/);
+  assert.match(providerSource, /bouncedRecipientEmail:\s*bounceInfo\.recipientEmail/);
+  assert.match(source, /if \(msg\.isBounce\) \{/);
+  assert.match(source, /processBounceMessage\(msg, userId, organizationId, provider\.name\)/);
+  assert.match(source, /type:\s*'email_bounced'/);
+  assert.match(source, /match_status:\s*'ignored'/);
+  assert.match(source, /match_method:\s*'bounce'/);
+  assert.match(source, /\.from\('email_sends'\)[\s\S]*?status:\s*'bounced'/);
+  assert.match(source, /\.from\('suggested_actions'\)[\s\S]*?trigger_event:\s*'email_bounce'/);
+  assert.match(sendAuditMigration, /'bounced'/);
+});
+
 test('email search and manual linking stay scoped to the current user inbox', () => {
   const searchSource = read('supabase/functions/unified-chat/skills/email/search-emails.ts');
   const linkSource = read('supabase/functions/unified-chat/skills/email/link-email-to-crm.ts');

@@ -12,6 +12,10 @@ const sender = fs.readFileSync(
   path.join(repoRoot, 'supabase/functions/send-scheduling-email/index.ts'),
   'utf8',
 );
+const bounceMigration = fs.readFileSync(
+  path.join(repoRoot, 'supabase/migrations/20260507124500_add_email_bounce_tracking.sql'),
+  'utf8',
+);
 
 test('send-scheduling-email has the email_sends audit table it requires', () => {
   assert.match(sender, /\.from\('email_sends'\)/);
@@ -21,4 +25,6 @@ test('send-scheduling-email has the email_sends audit table it requires', () => 
   assert.match(migration, /provider_message_id TEXT/);
   assert.match(migration, /trace_id TEXT/);
   assert.match(migration, /GRANT ALL ON TABLE public\.email_sends TO service_role/i);
+  assert.match(bounceMigration, /'bounced'/);
+  assert.match(bounceMigration, /idx_email_sends_recipient_status/);
 });

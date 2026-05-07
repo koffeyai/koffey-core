@@ -15,6 +15,9 @@ import type {
 import { determineDirection, extractEmailAddress, extractDisplayName } from './email-provider.ts';
 
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me';
+const BOUNCE_SENDER_PATTERN = /^(?:mailer-daemon|postmaster|mail delivery subsystem|mail delivery system|delivery status notification)\b/i;
+const BOUNCE_SUBJECT_PATTERN = /\b(?:delivery status notification|delivery incomplete|undeliver(?:ed|able)|message not delivered|mail delivery failed|failure notice|returned mail)\b/i;
+const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 
 // ============================================================================
 // Gmail Provider
@@ -172,6 +175,13 @@ async function fetchMessageMetadata(
     );
 
     const labelIds = msg.labelIds || [];
+    const bounceInfo = detectBounce({
+      fromRaw,
+      fromEmail,
+      subject,
+      snippet,
+      userEmail,
+    });
 
     return {
       providerId: messageId,
@@ -186,9 +196,46 @@ async function fetchMessageMetadata(
       receivedAt,
       labelIds,
       hasAttachments,
+      isBounce: bounceInfo.isBounce,
+      bouncedRecipientEmail: bounceInfo.recipientEmail,
+      bounceReason: bounceInfo.reason,
     };
   } catch (err: any) {
     console.error(`[gmail] Error fetching message ${messageId}:`, err.message);
     return null;
   }
+}
+
+function detectBounce(params: {
+  fromRaw: string;
+  fromEmail: string;
+  subject: string | null;
+  snippet: string | null;
+  userEmail: string;
+}): { isBounce: boolean; recipientEmail: string | null; reason: string | null } {
+  const fromRaw = String(params.fromRaw || '');
+  const fromEmail = String(params.fromEmail || '');
+  const subject = String(params.subject || '');
+  const snippet = String(params.snippet || '');
+  const combined = `${fromRaw} ${fromEmail} ${subject} ${snippet}`;
+  const isBounce = BOUNCE_SENDER_PATTERN.test(fromRaw)
+    || BOUNCE_SENDER_PATTERN.test(fromEmail.split('@')[0] || '')
+    || BOUNCE_SUBJECT_PATTERN.test(subject)
+    || /\b(?:your message wasn't delivered|address not found|recipient address rejected|mailbox unavailable)\b/i.test(snippet);
+
+  if (!isBounce) {
+    return { isBounce: false, recipientEmail: null, reason: null };
+  }
+
+  const userEmail = String(params.userEmail || '').toLowerCase();
+  const candidates = Array.from(combined.matchAll(EMAIL_PATTERN))
+    .map((match) => match[0].toLowerCase())
+    .filter((email) => email && email !== userEmail)
+    .filter((email) => !/^(?:mailer-daemon|postmaster)@/i.test(email));
+
+  return {
+    isBounce: true,
+    recipientEmail: candidates[0] || null,
+    reason: snippet || subject || 'Delivery failure notification',
+  };
 }

@@ -59,6 +59,15 @@ interface MatchResult {
   matchMethod: string | null;
 }
 
+interface BounceContext {
+  contactId: string | null;
+  accountId: string | null;
+  dealId: string | null;
+  contactName: string | null;
+  sendAuditId: string | null;
+  originalSubject: string | null;
+}
+
 async function matchEmailToCRM(
   email: string,
   organizationId: string
@@ -180,6 +189,232 @@ async function createEmailActivity(
   return data.id;
 }
 
+async function createBounceActivity(
+  msg: EmailMessage,
+  ctx: BounceContext,
+  userId: string,
+  organizationId: string,
+  bouncedRecipientEmail: string | null
+): Promise<string | null> {
+  const subject = ctx.originalSubject || msg.subject || '(no subject)';
+  const recipientLabel = ctx.contactName || bouncedRecipientEmail || 'recipient';
+  const { data, error } = await admin
+    .from('activities')
+    .insert({
+      organization_id: organizationId,
+      user_id: userId,
+      assigned_to: userId,
+      type: 'email_bounced',
+      title: `Email bounced: ${recipientLabel}`,
+      subject,
+      description: msg.bounceReason || msg.snippet || 'Delivery failure notification',
+      contact_id: ctx.contactId,
+      account_id: ctx.accountId,
+      deal_id: ctx.dealId,
+      scheduled_at: msg.receivedAt,
+      activity_date: msg.receivedAt,
+      completed: true,
+    })
+    .select('id')
+    .single();
+
+  if (error) {
+    console.warn(`[sync-email] Bounce activity creation failed: ${error.message}`);
+    return null;
+  }
+  return data.id;
+}
+
+async function resolveBounceContext(
+  recipientEmail: string | null,
+  userId: string,
+  organizationId: string
+): Promise<BounceContext> {
+  const match = recipientEmail
+    ? await matchEmailToCRM(recipientEmail, organizationId)
+    : { contactId: null, accountId: null, dealId: null, matchMethod: null };
+
+  let sendAudit: any = null;
+  if (recipientEmail) {
+    const { data } = await admin
+      .from('email_sends')
+      .select('id, contact_id, deal_id, subject, recipient_name')
+      .eq('organization_id', organizationId)
+      .eq('user_id', userId)
+      .eq('recipient_email', recipientEmail)
+      .in('status', ['pending', 'sent'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    sendAudit = data || null;
+  }
+
+  const contactId = match.contactId || sendAudit?.contact_id || null;
+  const dealId = match.dealId || sendAudit?.deal_id || null;
+  let accountId = match.accountId || null;
+  let contactName = sendAudit?.recipient_name || null;
+
+  if (contactId) {
+    const { data: contact } = await admin
+      .from('contacts')
+      .select('full_name, first_name, last_name, account_id')
+      .eq('organization_id', organizationId)
+      .eq('id', contactId)
+      .maybeSingle();
+    if (contact) {
+      accountId ||= contact.account_id || null;
+      contactName ||= contact.full_name || [contact.first_name, contact.last_name].filter(Boolean).join(' ') || null;
+    }
+  }
+
+  if (!accountId && dealId) {
+    const { data: deal } = await admin
+      .from('deals')
+      .select('account_id')
+      .eq('organization_id', organizationId)
+      .eq('id', dealId)
+      .maybeSingle();
+    accountId = deal?.account_id || null;
+  }
+
+  return {
+    contactId,
+    accountId,
+    dealId,
+    contactName,
+    sendAuditId: sendAudit?.id || null,
+    originalSubject: sendAudit?.subject || null,
+  };
+}
+
+async function markSendAsBounced(
+  auditId: string | null,
+  msg: EmailMessage
+): Promise<void> {
+  if (!auditId) return;
+
+  const metadata = {
+    bounceProviderMessageId: msg.providerId,
+    bounceThreadId: msg.threadId,
+    bounceReason: msg.bounceReason || msg.snippet || null,
+    bouncedAt: msg.receivedAt,
+  };
+
+  const { error } = await admin
+    .from('email_sends')
+    .update({
+      status: 'bounced',
+      error_message: msg.bounceReason || msg.snippet || 'Delivery failure notification',
+      metadata,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', auditId);
+
+  if (!error) return;
+
+  console.warn(`[sync-email] Failed to mark email send as bounced: ${error.message}`);
+}
+
+async function notifyBounce(
+  msg: EmailMessage,
+  ctx: BounceContext,
+  userId: string,
+  organizationId: string,
+  bouncedRecipientEmail: string | null,
+  activityId: string | null
+): Promise<void> {
+  const recipientLabel = ctx.contactName || bouncedRecipientEmail || 'recipient';
+  const subject = ctx.originalSubject || msg.subject || '(no subject)';
+  const dedupKey = `email-bounce:${organizationId}:${msg.providerId}`;
+
+  const { error } = await admin
+    .from('suggested_actions')
+    .upsert({
+      organization_id: organizationId,
+      contact_id: ctx.contactId,
+      deal_id: ctx.dealId,
+      action_type: 'follow_up',
+      title: `Email bounced for ${recipientLabel}`,
+      description: `The email "${subject}" appears to have bounced. Verify the address before following up.`,
+      priority: 'high',
+      dedup_key: dedupKey,
+      reasoning: msg.bounceReason || msg.snippet || 'Gmail delivered a bounce notification.',
+      confidence: 0.95,
+      status: 'active',
+      assigned_to: userId,
+      expires_at: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+      evidence: {
+        trigger_event: 'email_bounce',
+        data_points: {
+          provider_message_id: msg.providerId,
+          provider_thread_id: msg.threadId,
+          bounced_recipient_email: bouncedRecipientEmail,
+          activity_id: activityId,
+        },
+      },
+    }, { onConflict: 'dedup_key', ignoreDuplicates: true });
+
+  if (error) {
+    console.warn(`[sync-email] Bounce notification creation failed: ${error.message}`);
+  }
+}
+
+async function processBounceMessage(
+  msg: EmailMessage,
+  userId: string,
+  organizationId: string,
+  providerName: EmailProvider['name']
+): Promise<boolean> {
+  const bouncedRecipientEmail = msg.bouncedRecipientEmail || null;
+  const ctx = await resolveBounceContext(bouncedRecipientEmail, userId, organizationId);
+  let emailMessageId: string | null = null;
+
+  const { data: insertedEmail, error: insertError } = await admin
+    .from('email_messages')
+    .insert({
+      user_id: userId,
+      organization_id: organizationId,
+      provider: providerName,
+      provider_message_id: msg.providerId,
+      provider_thread_id: msg.threadId,
+      direction: msg.direction,
+      from_email: msg.fromEmail,
+      from_name: msg.fromName,
+      to_emails: msg.toEmails,
+      cc_emails: msg.ccEmails,
+      subject: msg.subject,
+      snippet: msg.snippet,
+      received_at: msg.receivedAt,
+      label_ids: msg.labelIds,
+      has_attachments: msg.hasAttachments,
+      contact_id: ctx.contactId,
+      account_id: ctx.accountId,
+      deal_id: ctx.dealId,
+      match_status: 'ignored',
+      match_method: 'bounce',
+    })
+    .select('id')
+    .single();
+
+  if (insertError) {
+    if (insertError.code === '23505') return false;
+    console.warn(`[sync-email] Bounce email record insert failed: ${insertError.message}`);
+  } else {
+    emailMessageId = insertedEmail?.id || null;
+  }
+
+  const activityId = await createBounceActivity(msg, ctx, userId, organizationId, bouncedRecipientEmail);
+  if (emailMessageId && activityId) {
+    await admin
+      .from('email_messages')
+      .update({ activity_id: activityId, updated_at: new Date().toISOString() })
+      .eq('id', emailMessageId);
+  }
+  await markSendAsBounced(ctx.sendAuditId, msg);
+  await notifyBounce(msg, ctx, userId, organizationId, bouncedRecipientEmail, activityId);
+  return true;
+}
+
 // ============================================================================
 // Engagement Stats Update
 // ============================================================================
@@ -232,8 +467,8 @@ async function syncEmailsForUser(
   userId: string,
   organizationId: string,
   provider: EmailProvider
-): Promise<{ synced: number; matched: number; errors: number }> {
-  const stats = { synced: 0, matched: 0, errors: 0 };
+): Promise<{ synced: number; matched: number; bounced: number; errors: number }> {
+  const stats = { synced: 0, matched: 0, bounced: 0, errors: 0 };
 
   // 1. Get user's Google token
   const { data: tokenRow, error: tokenError } = await admin
@@ -347,6 +582,15 @@ async function syncEmailsForUser(
   // 5. Process each message
   for (const msg of messages) {
     try {
+      if (msg.isBounce) {
+        const processed = await processBounceMessage(msg, userId, organizationId, provider.name);
+        if (processed) {
+          stats.bounced++;
+          stats.synced++;
+        }
+        continue;
+      }
+
       // Skip generic senders
       if (isGenericSender(msg.fromEmail)) continue;
 

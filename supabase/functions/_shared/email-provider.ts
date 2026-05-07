@@ -24,6 +24,9 @@ export interface EmailMessage {
   receivedAt: string;        // ISO timestamp
   labelIds: string[];        // Gmail labels or Outlook categories
   hasAttachments: boolean;
+  isBounce?: boolean;
+  bouncedRecipientEmail?: string | null;
+  bounceReason?: string | null;
 }
 
 export interface SyncOpts {
