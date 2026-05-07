@@ -606,6 +606,29 @@ test('buildDeterministicScheduleMeetingPlan separates contact name from named op
   );
 });
 
+test('buildDeterministicScheduleMeetingPlan routes meet-with calendar invite asks to schedule_meeting', () => {
+  const plan = buildDeterministicScheduleMeetingPlan(
+    'I need to meet with Jordan next week on thursday morning, est. Please send out a calendar invite.',
+    {
+      intent: 'crm_mutation',
+      entityType: 'contact',
+      domains: ['scheduling'],
+    },
+    new Set(['schedule_meeting', 'draft_email']),
+  );
+
+  assert.equal(plan?.toolCalls?.[0]?.function?.name, 'schedule_meeting');
+  assert.deepEqual(
+    JSON.parse(plan.toolCalls[0].function.arguments),
+    {
+      meeting_type: 'meeting',
+      contact_name: 'Jordan',
+      proposed_date: 'next week',
+      time_preference: 'morning',
+    },
+  );
+});
+
 test('repairScheduleMeetingArgsFromMessage rehydrates contact email before scheduling execution', () => {
   const repaired = repairScheduleMeetingArgsFromMessage(
     {
@@ -1352,6 +1375,30 @@ test('buildDeterministicPendingDraftEmailPlan ignores stale draft prompt after c
       { role: 'assistant', content: 'A contact with email existing@example.com already exists: Existing Person. Reply "yes" to update this contact with the details you provided, or tell me what to change.' },
     ],
     new Set(['draft_email']),
+  );
+
+  assert.equal(plan, null);
+});
+
+test('buildDeterministicPendingDraftEmailPlan lets explicit calendar invite asks outrank stale draft context', () => {
+  const plan = buildDeterministicPendingDraftEmailPlan(
+    'I need to meet with Jordan next week on thursday morning, est. Please send out a calendar invite.',
+    [
+      { role: 'user', content: 'send a note about the expansion deal' },
+      { role: 'assistant', content: 'Action status:\n- draft_email: I can draft the note to Jordan, but I need to know what it should communicate. What should the note say or ask for?' },
+    ],
+    new Set(['draft_email', 'schedule_meeting']),
+    {
+      type: 'draft_email_missing_context',
+      userPrompt: 'send a note about the expansion deal',
+      assistantPrompt: 'I can draft the note to Jordan, but I need to know what it should communicate. What should the note say or ask for?',
+      args: {
+        recipient_name: 'Jordan',
+        deal_name: 'Expansion Deal',
+        email_type: 'follow_up',
+      },
+      result: {},
+    },
   );
 
   assert.equal(plan, null);

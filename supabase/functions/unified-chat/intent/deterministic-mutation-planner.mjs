@@ -24,7 +24,9 @@ const UPDATE_DEAL_PATTERNS = [
 ];
 const SCHEDULE_MEETING_PATTERNS = [
   /\b(?:schedule|book|set\s+up|arrange)\b[\s\S]*\b(?:call|meeting|calendar\s+invite|meeting\s+invite|lunch|coffee)\b/i,
+  /\b(?:need|want|have)\s+to\s+(?:meet|connect|sync)\s+with\b/i,
   /\b(?:check|find)\b[\s\S]*\bcalendar\s+availability\b/i,
+  /\b(?:send|create)\s+(?:out\s+)?(?:a\s+)?(?:calendar|meeting)\s+invite\b/i,
   /\b(?:send|draft|create)\b[\s\S]*\bscheduling\s+email\b/i,
 ];
 
@@ -1639,6 +1641,7 @@ function extractPendingDraftEmailFromWorkflow(value) {
 export function buildDeterministicPendingDraftEmailPlan(message, conversationHistory, allowedToolNames = new Set(), pendingWorkflow = null) {
   const toolNames = allowedToolNames instanceof Set ? allowedToolNames : new Set(allowedToolNames || []);
   if (!toolNames.has('draft_email')) return null;
+  if (toolNames.has('schedule_meeting') && extractScheduleArgsFromMessage(message)) return null;
 
   const workflowPending = extractPendingDraftEmailFromWorkflow(pendingWorkflow);
   const historyPending = inferPendingDraftEmailFromHistory(conversationHistory);

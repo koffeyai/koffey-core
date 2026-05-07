@@ -1366,7 +1366,7 @@ const handler = async (req: Request): Promise<Response> => {
     let domainFilter = needsTools
       ? (domainsHint.length > 0 ? domainsHint : FALLBACK_DOMAINS)
       : undefined;
-    const deterministicSchedulingOverride = /\b(?:schedule|book|set\s+up|arrange)\b[\s\S]*\b(?:call|meeting|calendar\s+invite|meeting\s+invite|lunch|coffee)\b|\b(?:availability|scheduling\s+email)\b[\s\S]*\b(?:for|with)\b/i.test(message);
+    const deterministicSchedulingOverride = /\b(?:schedule|book|set\s+up|arrange)\b[\s\S]*\b(?:call|meeting|calendar\s+invite|meeting\s+invite|lunch|coffee)\b|\b(?:need|want|have)\s+to\s+(?:meet|connect|sync)\s+with\b|\b(?:send|create)\s+(?:out\s+)?(?:a\s+)?(?:calendar|meeting)\s+invite\b|\b(?:availability|scheduling\s+email)\b[\s\S]*\b(?:for|with)\b/i.test(message);
     if (deterministicMutationOverride && domainFilter) {
       domainFilter = Array.from(new Set([...domainFilter, 'create', 'update', 'search'] as SkillDomain[]));
     }
