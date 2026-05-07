@@ -6,10 +6,12 @@ import {
   buildDeterministicPendingUpdateDealPlan,
   buildDeterministicPendingUpdateDealPlanFromData,
   buildDeterministicUpdateDealPlan,
+  buildDeterministicUpdateContactPlan,
   inferPendingAccountRenameFromHistory,
   buildDeterministicCreateAccountThenDealPlan,
   extractCreateDealArgsFromMessage,
   extractUpdateDealArgsFromMessage,
+  extractUpdateContactArgsFromMessage,
   buildDeterministicCreateDealPlan,
   buildDeterministicCreateTaskPlan,
   buildDeterministicScheduleMeetingPlan,
@@ -26,6 +28,7 @@ import {
   repairScheduleMeetingArgsFromMessage,
   inferPendingUpdateDealFromHistory,
   repairDraftEmailArgsFromMessage,
+  hasDeterministicMutationCue,
 } from '../../supabase/functions/unified-chat/intent/deterministic-mutation-planner.mjs';
 
 test('extractCreateDealArgsFromMessage parses account and amount from create opportunity phrasing', () => {
@@ -886,6 +889,47 @@ test('buildDeterministicCreateContactPlan keeps comma-separated title before acc
       email: 'casey.cycle-123@example.com',
       company: 'Cycle Account CYCLE-123',
       title: 'VP Operations',
+    },
+  );
+});
+
+test('extractUpdateContactArgsFromMessage parses possessive email updates', () => {
+  assert.equal(
+    hasDeterministicMutationCue("please update Jordan Example's email to jordan.example@example.com"),
+    true,
+  );
+  assert.deepEqual(
+    extractUpdateContactArgsFromMessage("please update Jordan Example's email to jordan.example@example.com"),
+    {
+      contact_name: 'Jordan Example',
+      updates: {
+        email: 'jordan.example@example.com',
+      },
+    },
+  );
+});
+
+test('buildDeterministicUpdateContactPlan routes direct contact email updates', () => {
+  const plan = buildDeterministicUpdateContactPlan(
+    'change the email for Jordan Example to jordan.example@example.com',
+    {
+      intent: 'entity_lookup',
+      entityType: 'account',
+      domains: ['context'],
+    },
+    new Set(['update_contact', 'search_crm']),
+  );
+
+  assert.equal(plan?.provider, 'deterministic');
+  assert.equal(plan?.model, 'deterministic-update-contact');
+  assert.equal(plan?.toolCalls?.[0]?.function?.name, 'update_contact');
+  assert.deepEqual(
+    JSON.parse(plan.toolCalls[0].function.arguments),
+    {
+      contact_name: 'Jordan Example',
+      updates: {
+        email: 'jordan.example@example.com',
+      },
     },
   );
 });

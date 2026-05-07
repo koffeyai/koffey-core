@@ -55,6 +55,7 @@ import {
   buildDeterministicPendingUpdateDealPlan,
   buildDeterministicPendingUpdateDealPlanFromData,
   buildDeterministicUpdateDealPlan,
+  buildDeterministicUpdateContactPlan,
   buildDeterministicCreateAccountThenDealPlan,
   buildDeterministicCreateDealPlan,
   buildDeterministicCreateTaskPlan,
@@ -1335,6 +1336,7 @@ const handler = async (req: Request): Promise<Response> => {
     const shouldBypassPipelineRetrievalForMutation = !negatedDealCreate && (
       /\b(?:create|add|new)\b[\s\S]*\b(?:deal|opportunit(?:y|ies)|account|company|contact|lead)\b/i.test(message)
       || /\b(?:delete|remove|erase|update|rename|change)\b[\s\S]*\b(?:deal|opportunit(?:y|ies)|account|company|contact|lead)\b/i.test(message)
+      || /\b(?:update|change|set|add)\b[\s\S]*\b(?:email|e-mail|phone|phone\s+number|mobile|title)\b/i.test(message)
     );
     const shouldDeferDeterministicMutationFallback = shouldDeferDeterministicMutationPlan({
       intentConfidence: authoritativeIntent?.confidence,
@@ -2753,6 +2755,27 @@ const handler = async (req: Request): Promise<Response> => {
         } as Awaited<ReturnType<typeof callWithFallback>>;
         deterministicMutationToolPlanUsed = true;
         meta.deterministicMutationPlan = 'update_deal';
+        meta.execution = {
+          ...(meta.execution || {}),
+          toolPlannerInvoked: true,
+          deterministicPathUsed: true,
+        };
+      }
+    }
+
+    if (!routerUsedForToolPlan && !deterministicMutationToolPlanUsed && !shouldDeferDeterministicMutationFallback) {
+      const deterministicUpdateContactPlan = buildDeterministicUpdateContactPlan(
+        message,
+        authoritativeIntent,
+        allowedToolNames,
+      );
+      if (deterministicUpdateContactPlan) {
+        llm = {
+          ...deterministicUpdateContactPlan,
+          routingDecision: routing,
+        } as Awaited<ReturnType<typeof callWithFallback>>;
+        deterministicMutationToolPlanUsed = true;
+        meta.deterministicMutationPlan = 'update_contact';
         meta.execution = {
           ...(meta.execution || {}),
           toolPlannerInvoked: true,

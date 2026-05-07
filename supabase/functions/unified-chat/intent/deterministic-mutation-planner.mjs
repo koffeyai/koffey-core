@@ -9,6 +9,10 @@ const CREATE_CONTACT_PATTERNS = [
   /\b(?:create|add|new)\b[\s\S]*\b(?:contact|lead)\b/i,
   /\b(?:contact|lead)\b[\s\S]*\b(?:create|add|new)\b/i,
 ];
+const UPDATE_CONTACT_PATTERNS = [
+  /\b(?:update|change|set|add)\b[\s\S]*\b(?:email|e-mail|phone|phone\s+number|mobile|title)\b/i,
+  /\b(?:email|e-mail|phone|phone\s+number|mobile|title)\b[\s\S]*\b(?:for|of|on)\b/i,
+];
 const CREATE_TASK_PATTERNS = [
   /\b(?:create|add|new|make|set|schedule)\b[\s\S]*\b(?:task|next\s+step|todo|to-do|reminder|follow[\s-]?up)\b/i,
   /\bremind\s+me\s+to\b/i,
@@ -874,6 +878,68 @@ function extractCreateContactArgsFromMessage(message) {
   return args;
 }
 
+function extractUpdateContactNameFromMessage(message) {
+  const rawMessage = normalizeWhitespace(message)
+    .replace(EMAIL_PATTERN, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!rawMessage) return null;
+
+  const fieldPattern = '(?:email|e-mail|phone|phone\\s+number|mobile|title)';
+  const matches = [
+    rawMessage.match(new RegExp(`\\b(?:update|change|set|add)\\s+(?:the\\s+)?(?:contact|lead|person)\\s+(.+?)(?:'s|’s)?\\s+${fieldPattern}\\b`, 'i')),
+    rawMessage.match(new RegExp(`\\b(?:update|change|set|add)\\s+(.+?)(?:'s|’s)\\s+${fieldPattern}\\b`, 'i')),
+    rawMessage.match(new RegExp(`\\b(?:update|change|set|add)\\s+(.+?)\\s+${fieldPattern}\\s+(?:to|=|is|:)\\b`, 'i')),
+    rawMessage.match(new RegExp(`\\b(?:update|change|set|add)\\s+(?:the\\s+)?${fieldPattern}\\s+(?:for|of|on)\\s+(.+?)(?=\\s+(?:to|=|is|:)\\b|[,.!?]|$)`, 'i')),
+    rawMessage.match(new RegExp(`\\b${fieldPattern}\\s+(?:for|of|on)\\s+(.+?)(?=\\s+(?:to|=|is|:)\\b|[,.!?]|$)`, 'i')),
+  ];
+
+  for (const match of matches) {
+    const candidate = sanitizeContactName(String(match?.[1] || '')
+      .replace(/^(?:the\s+)?(?:contact|lead|person)\s+/i, '')
+      .trim());
+    if (candidate) return candidate;
+  }
+
+  return null;
+}
+
+export function extractUpdateContactArgsFromMessage(message) {
+  const rawMessage = normalizeWhitespace(message);
+  if (!rawMessage) return null;
+  if (!UPDATE_CONTACT_PATTERNS.some((pattern) => pattern.test(rawMessage))) return null;
+
+  const updates = {};
+  const email = extractContactEmailFromMessage(rawMessage);
+  if (email && /\b(?:email|e-mail)\b/i.test(rawMessage)) {
+    updates.email = email;
+  }
+
+  if (/\b(?:phone|phone\s+number|mobile)\b/i.test(rawMessage)) {
+    const phoneMatch = rawMessage.match(/\b(?:phone|phone\s+number|mobile)\s*(?:to|=|:|is)?\s*([+\d][\d\s().-]{6,}\d)\b/i)
+      || rawMessage.match(/\b(?:to|=|:|is)\s*([+\d][\d\s().-]{6,}\d)\b/i);
+    const phone = sanitizeGenericEntityName(phoneMatch?.[1] || '');
+    if (phone) updates.phone = phone;
+  }
+
+  if (/\btitle\b/i.test(rawMessage)) {
+    const titleMatch = rawMessage.match(/\btitle\s*(?:to|=|:|is)\s*([^,.;]+?)(?=\s+(?:for|of|on|at|with)\b|[,.!?]|$)/i)
+      || rawMessage.match(/\b(?:update|change|set)\b[\s\S]*?\btitle\b[\s\S]*?\bto\s+([^,.;]+?)(?=\s+(?:for|of|on|at|with)\b|[,.!?]|$)/i);
+    const title = sanitizeGenericEntityName(titleMatch?.[1] || '');
+    if (title) updates.title = title;
+  }
+
+  if (Object.keys(updates).length === 0) return null;
+
+  const contactName = extractUpdateContactNameFromMessage(rawMessage);
+  if (!contactName) return null;
+
+  return {
+    contact_name: contactName,
+    updates,
+  };
+}
+
 function extractUpdateDealStageFromMessage(message) {
   const rawMessage = normalizeWhitespace(message);
   if (!rawMessage) return null;
@@ -945,6 +1011,7 @@ export function hasDeterministicMutationCue(message) {
   return CREATE_DEAL_PATTERNS.some((pattern) => pattern.test(rawMessage))
     || CREATE_ACCOUNT_CUE_PATTERN.test(rawMessage)
     || CREATE_CONTACT_PATTERNS.some((pattern) => pattern.test(rawMessage))
+    || UPDATE_CONTACT_PATTERNS.some((pattern) => pattern.test(rawMessage))
     || CREATE_TASK_PATTERNS.some((pattern) => pattern.test(rawMessage))
     || DELETE_DEAL_PATTERNS.some((pattern) => pattern.test(rawMessage))
     || UPDATE_DEAL_PATTERNS.some((pattern) => pattern.test(rawMessage))
@@ -1127,6 +1194,41 @@ export function buildDeterministicUpdateDealPlan(message, intent, allowedToolNam
       type: 'function',
       function: {
         name: 'update_deal',
+        arguments: JSON.stringify(args),
+      },
+    }],
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+  };
+}
+
+export function buildDeterministicUpdateContactPlan(message, intent, allowedToolNames = new Set()) {
+  const toolNames = allowedToolNames instanceof Set ? allowedToolNames : new Set(allowedToolNames || []);
+  if (!toolNames.has('update_contact')) return null;
+
+  const args = extractUpdateContactArgsFromMessage(message);
+  if (!args) return null;
+
+  const normalizedIntent = intent || {};
+  const domains = new Set((normalizedIntent.domains || []).map((domain) => String(domain || '').toLowerCase()));
+  const entityType = String(normalizedIntent.entityType || '').toLowerCase();
+  const explicitIntent = String(normalizedIntent.intent || '').toLowerCase();
+  const mentionsContactUpdate = UPDATE_CONTACT_PATTERNS.some((pattern) => pattern.test(String(message || '')));
+  const clearlyConflictingIntent = explicitIntent
+    && explicitIntent !== 'crm_mutation'
+    && !domains.has('update')
+    && entityType
+    && entityType !== 'contact'
+    && !mentionsContactUpdate;
+  if (clearlyConflictingIntent) return null;
+
+  return {
+    provider: 'deterministic',
+    model: 'deterministic-update-contact',
+    toolCalls: [{
+      id: 'deterministic_update_contact_0',
+      type: 'function',
+      function: {
+        name: 'update_contact',
         arguments: JSON.stringify(args),
       },
     }],
