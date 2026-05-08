@@ -330,7 +330,7 @@ export async function resolveAccountByIdOrName(
 export async function resolveContactByIdOrName(
   supabase: any,
   organizationId: string,
-  options: { contactId?: string | null; contactName?: string | null; accountId?: string | null },
+  options: { contactId?: string | null; contactName?: string | null; contactEmail?: string | null; accountId?: string | null },
 ): Promise<{ contact: any | null; multiple?: any[]; error?: string }> {
   if (options.contactId) {
     const { data: byId, error: byIdErr } = await supabase
@@ -340,6 +340,30 @@ export async function resolveContactByIdOrName(
       .eq('organization_id', organizationId)
       .maybeSingle();
     if (!byIdErr && byId) return { contact: byId };
+  }
+
+  if (options.contactEmail) {
+    const normalizedEmail = String(options.contactEmail || '').trim().toLowerCase();
+    if (normalizedEmail) {
+      let query = supabase
+        .from('contacts')
+        .select('*, accounts(name)')
+        .eq('organization_id', organizationId)
+        .ilike('email', normalizedEmail)
+        .order('updated_at', { ascending: false })
+        .limit(5);
+
+      if (options.accountId) {
+        query = query.eq('account_id', options.accountId);
+      }
+
+      const { data: matches, error } = await query;
+      if (error || !matches || matches.length === 0) {
+        return { contact: null, error: `I couldn't find a contact with email "${normalizedEmail}".` };
+      }
+      if (matches.length > 1) return { contact: null, multiple: matches };
+      return { contact: matches[0] };
+    }
   }
 
   if (options.contactName) {

@@ -593,7 +593,7 @@ export async function executeUpdateContact(
   args: any,
   organizationId: string,
 ): Promise<any> {
-  const { contact_id, contact_name, updates } = args || {};
+  const { contact_id, contact_name, contact_email, updates } = args || {};
 
   if (!updates || Object.keys(updates).length === 0) {
     return { success: false, message: 'No updates specified. What would you like to change?' };
@@ -602,6 +602,7 @@ export async function executeUpdateContact(
   const resolved = await resolveContactByIdOrName(supabase, organizationId, {
     contactId: contact_id,
     contactName: contact_name,
+    contactEmail: contact_email,
   });
 
   if (resolved.multiple) {

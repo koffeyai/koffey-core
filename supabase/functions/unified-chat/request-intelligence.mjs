@@ -380,6 +380,7 @@ export function buildAnalyticsDashboardSummaryFromDeals(deals, message = '') {
 export function isDirectPipelineSummaryRequest(message) {
   const lower = (message || "").toLowerCase().trim();
   if (!lower) return false;
+  if (isDraftingRequest(lower)) return false;
 
   // "show all deals", "list all my deals", "every deal" → listing, not pipeline summary
   const isExhaustiveListRequest = /\b(all\s+(my\s+)?deals|every\s+(single\s+)?deal|list\s+all|show\s+all)\b/.test(lower);
@@ -407,6 +408,7 @@ export function isPipelineFollowUpRequest(message, historyText) {
   const lower = (message || "").toLowerCase().trim();
   const history = (historyText || "").toLowerCase();
   if (!lower || !history) return false;
+  if (isDraftingRequest(lower)) return false;
 
   const followUpCue = /\b(what about|how about|same for|and also|for this quarter|for this qtr|for this month|for this week|this quarter|this qtr|this month|this week|q[1-4])\b/.test(lower)
     || new RegExp(`\\b(what about|how about|for)\\s+(${MONTH_PATTERN})(\\s+20\\d{2})?\\b`).test(lower);
@@ -414,6 +416,14 @@ export function isPipelineFollowUpRequest(message, historyText) {
 
   const historyHasPipelineContext = /\b(pipeline|top deals?|stale deals?|slated to close|close dates?|forecast|weighted value)\b/.test(history);
   return historyHasPipelineContext;
+}
+
+export function isDraftingRequest(message) {
+  const lower = (message || "").toLowerCase().trim();
+  if (!lower) return false;
+  return /\b(?:draft|write|compose|regenerate|rewrite|create)\b[\s\S]*\b(?:email|message|note|follow[\s-]?up|reply)\b/.test(lower)
+    || /\b(?:external|internal)-facing\b[\s\S]*\bemail\b/.test(lower)
+    || /\bvoice notes?\b[\s\S]*\bemail\b/.test(lower);
 }
 
 export function isLikelyFollowUpMessage(message) {

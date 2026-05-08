@@ -148,6 +148,143 @@ function sanitizeVoiceNotes(value: unknown): string {
   return cleaned.slice(0, 260).trim();
 }
 
+type UserEmailStylePreferences = {
+  tone: string;
+  communication_style: string;
+  energy_level: string;
+  verbosity: string;
+  format_preference: string;
+  signature_phrases: string[];
+  avoid_phrases: string[];
+  custom_instructions: string;
+  source: 'user_settings' | 'defaults';
+};
+
+const DEFAULT_EMAIL_STYLE_PREFERENCES: UserEmailStylePreferences = {
+  tone: 'professional',
+  communication_style: 'professional',
+  energy_level: 'balanced',
+  verbosity: 'balanced',
+  format_preference: 'mixed',
+  signature_phrases: [],
+  avoid_phrases: [],
+  custom_instructions: '',
+  source: 'defaults',
+};
+
+function normalizePreferenceValue(value: unknown, allowed: string[], fallback: string): string {
+  const normalized = String(value || '').toLowerCase().trim();
+  return allowed.includes(normalized) ? normalized : fallback;
+}
+
+function normalizeEmailTone(value: unknown): string {
+  return normalizePreferenceValue(value, ['casual', 'professional', 'formal', 'warm'], '');
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .slice(0, 10);
+}
+
+function sanitizeStyleGuidance(value: unknown): string {
+  return stripInternalSourceMarkers(value)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 700)
+    .trim();
+}
+
+function humanizeStyleValue(value: string): string {
+  return value.replace(/[_-]+/g, ' ').trim();
+}
+
+async function loadUserEmailStylePreferences(supabase: any, userId: string): Promise<UserEmailStylePreferences> {
+  if (!userId) return DEFAULT_EMAIL_STYLE_PREFERENCES;
+
+  try {
+    const query = supabase
+      .from('user_prompt_preferences')
+      .select('tone, verbosity, format_preference, custom_instructions, communication_style, energy_level, signature_phrases, avoid_phrases')
+      .eq('user_id', userId)
+      .limit(1);
+    const { data } = typeof query.maybeSingle === 'function'
+      ? await query.maybeSingle()
+      : await query.single();
+    const row = data && typeof data === 'object' ? data as Record<string, unknown> : null;
+    if (!row) return DEFAULT_EMAIL_STYLE_PREFERENCES;
+
+    return {
+      tone: normalizePreferenceValue(row.tone, ['casual', 'professional', 'formal'], DEFAULT_EMAIL_STYLE_PREFERENCES.tone),
+      communication_style: normalizePreferenceValue(row.communication_style, ['consultative', 'direct', 'storyteller', 'technical', 'professional'], DEFAULT_EMAIL_STYLE_PREFERENCES.communication_style),
+      energy_level: normalizePreferenceValue(row.energy_level, ['warm_enthusiastic', 'calm_measured', 'bold_confident', 'balanced'], DEFAULT_EMAIL_STYLE_PREFERENCES.energy_level),
+      verbosity: normalizePreferenceValue(row.verbosity, ['concise', 'balanced', 'detailed'], DEFAULT_EMAIL_STYLE_PREFERENCES.verbosity),
+      format_preference: normalizePreferenceValue(row.format_preference, ['bullets', 'paragraphs', 'mixed'], DEFAULT_EMAIL_STYLE_PREFERENCES.format_preference),
+      signature_phrases: stringArray(row.signature_phrases),
+      avoid_phrases: stringArray(row.avoid_phrases),
+      custom_instructions: sanitizeStyleGuidance(row.custom_instructions),
+      source: 'user_settings',
+    };
+  } catch (error) {
+    console.warn('[draft_email] Failed to load user writing style preferences', error);
+    return DEFAULT_EMAIL_STYLE_PREFERENCES;
+  }
+}
+
+function buildPreferenceStyleGuidance(preferences: UserEmailStylePreferences): string {
+  const guidance = [
+    preferences.communication_style && preferences.communication_style !== 'professional'
+      ? `${humanizeStyleValue(preferences.communication_style)} communication approach`
+      : '',
+    preferences.energy_level && preferences.energy_level !== 'balanced'
+      ? `${humanizeStyleValue(preferences.energy_level)} energy`
+      : '',
+    preferences.verbosity && preferences.verbosity !== 'balanced'
+      ? `${humanizeStyleValue(preferences.verbosity)} length`
+      : '',
+    preferences.custom_instructions
+      ? `Custom style instructions: ${preferences.custom_instructions}`
+      : '',
+    preferences.signature_phrases.length
+      ? `Natural phrases: ${preferences.signature_phrases.join(', ')}`
+      : '',
+    preferences.avoid_phrases.length
+      ? `Avoid phrases: ${preferences.avoid_phrases.join(', ')}`
+      : '',
+  ].filter(Boolean).join('; ');
+
+  return sanitizeStyleGuidance(guidance);
+}
+
+function buildPublicStyleProfile(preferences: UserEmailStylePreferences, tone: string) {
+  return {
+    source: preferences.source,
+    tone,
+    communication_style: preferences.communication_style,
+    energy_level: preferences.energy_level,
+    verbosity: preferences.verbosity,
+  };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function applyAvoidPhrases(body: string, avoidPhrases: string[]): string {
+  let cleaned = body;
+  for (const phrase of avoidPhrases) {
+    const safePhrase = phrase.trim();
+    if (!safePhrase) continue;
+    cleaned = cleaned.replace(new RegExp(`\\b${escapeRegExp(safePhrase)}\\b`, 'gi'), '').replace(/\s{2,}/g, ' ');
+  }
+  return cleaned
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function resolveVoicePreferences(tone: string, voiceNotes: string) {
   const lower = `${tone || ''} ${voiceNotes || ''}`.toLowerCase();
   const signatureMatch = voiceNotes.match(/\bsign(?:ed|ing)?\s*(?:off\s*)?(?:as|with)\s+([A-Za-z][A-Za-z0-9 .'-]{0,60})(?=\s*(?:[.;,]|$))/i);
@@ -482,7 +619,7 @@ Always include a clear subject line and call-to-action.`,
   - User must explicitly approve before any email is sent`,
 
   execute: async (ctx: ToolExecutionContext) => {
-    const { supabase, organizationId, args, entityContext } = ctx;
+    const { supabase, organizationId, userId, args, entityContext } = ctx;
     const {
       recipient_name,
       recipient_email,
@@ -496,13 +633,19 @@ Always include a clear subject line and call-to-action.`,
       audience_scope,
     } = args as Record<string, string | undefined>;
     const requestedAudienceScope = normalizeAudienceScope(audience_scope);
+    const stylePreferences = await loadUserEmailStylePreferences(supabase, userId);
     const safeVoiceNotes = sanitizeVoiceNotes(voice_notes);
+    const resolvedTone = normalizeEmailTone(tone) || stylePreferences.tone || 'professional';
+    const preferenceStyleGuidance = buildPreferenceStyleGuidance(stylePreferences);
+    const effectiveVoiceNotes = [preferenceStyleGuidance, safeVoiceNotes].filter(Boolean).join('; ');
+    const styleProfile = buildPublicStyleProfile(stylePreferences, resolvedTone);
 
     const result: Record<string, unknown> = {
       email_type: email_type || 'custom',
-      tone: tone || 'professional',
+      tone: resolvedTone,
       audience_scope: requestedAudienceScope || null,
       voice_notes: safeVoiceNotes || null,
+      style_profile: styleProfile,
       user_context: userContext || null,
     };
 
@@ -723,7 +866,6 @@ Always include a clear subject line and call-to-action.`,
       (contact as any)?.company,
     );
     const resolvedEmailType = email_type || 'follow_up';
-    const resolvedTone = tone || 'professional';
     const recentActivities = Array.isArray(result.recent_activities)
       ? result.recent_activities as Array<Record<string, unknown>>
       : [];
@@ -807,18 +949,20 @@ Always include a clear subject line and call-to-action.`,
     result.audienceScope = resolvedAudienceScope;
     result.voice_notes = safeVoiceNotes || null;
     result.voiceNotes = safeVoiceNotes || '';
+    result.style_profile = styleProfile;
+    result.styleProfile = styleProfile;
     result.subject = subject;
-    result.message = buildDraftBody({
+    result.message = applyAvoidPhrases(buildDraftBody({
       recipientName: resolvedRecipientName,
       emailType: resolvedEmailType,
       tone: resolvedTone,
-      voiceNotes: safeVoiceNotes,
+      voiceNotes: effectiveVoiceNotes,
       audienceScope: resolvedAudienceScope,
       context: userContext || '',
       deal,
       accountName: resolvedAccountName,
       recentActivities,
-    });
+    }), stylePreferences.avoid_phrases);
     result.dealContext = deal ? {
       id: (deal as any).id,
       name: (deal as any).name,

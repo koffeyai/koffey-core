@@ -54,3 +54,14 @@ test('CRM create tools only call embedding dependency through safe wrapper', () 
 
   assert.equal(directCalls.length, 1, 'embedding dependency should only be invoked inside triggerEmbedding wrapper');
 });
+
+test('update_contact can resolve the target contact by existing email', () => {
+  const skillSource = fs.readFileSync(path.join(repoRoot, 'supabase/functions/unified-chat/skills/update/update-contact.ts'), 'utf8');
+  const executorSource = fs.readFileSync(path.join(repoRoot, 'supabase/functions/unified-chat/tools/crm-update.ts'), 'utf8');
+  const entityUtilsSource = fs.readFileSync(path.join(repoRoot, 'supabase/functions/unified-chat/tools/entity-utils.ts'), 'utf8');
+
+  assert.match(skillSource, /contact_email/);
+  assert.match(executorSource, /contactEmail:\s*contact_email/);
+  assert.match(entityUtilsSource, /options\.contactEmail/);
+  assert.match(entityUtilsSource, /\.ilike\('email', normalizedEmail\)/);
+});

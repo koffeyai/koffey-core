@@ -909,6 +909,19 @@ test('extractUpdateContactArgsFromMessage parses possessive email updates', () =
   );
 });
 
+test('extractUpdateContactArgsFromMessage resolves contacts identified by email', () => {
+  assert.deepEqual(
+    extractUpdateContactArgsFromMessage('update pat.rivera@example.com to pat rivera'),
+    {
+      contact_email: 'pat.rivera@example.com',
+      updates: {
+        first_name: 'Pat',
+        last_name: 'Rivera',
+      },
+    },
+  );
+});
+
 test('buildDeterministicUpdateContactPlan routes direct contact email updates', () => {
   const plan = buildDeterministicUpdateContactPlan(
     'change the email for Jordan Example to jordan.example@example.com',

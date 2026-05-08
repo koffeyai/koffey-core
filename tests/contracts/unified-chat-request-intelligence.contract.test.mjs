@@ -6,6 +6,7 @@ import {
   parsePeriodBounds,
   buildDirectPipelineSummaryFromDeals,
   isDirectPipelineSummaryRequest,
+  isDraftingRequest,
   isPipelineFollowUpRequest,
   isLikelyFollowUpMessage,
   isCompoundRequest,
@@ -124,7 +125,17 @@ test('pipeline summary classifier avoids generic deal/contact messages', () => {
   assert.equal(isDirectPipelineSummaryRequest("what's closable this quarter?"), true);
   assert.equal(isDirectPipelineSummaryRequest("what's on my plate"), true);
   assert.equal(isDirectPipelineSummaryRequest('is there a deal with pepsi?'), false);
+  assert.equal(isDirectPipelineSummaryRequest('draft a follow-up email for Acme this week'), false);
   assert.equal(isDirectPipelineSummaryRequest("tom smith, vp of infrastructure, that's all i got"), false);
+});
+
+test('pipeline follow-up classifier does not hijack email drafting prompts', () => {
+  const historyText = 'Pipeline context: top deals, close dates, forecast, weighted value';
+  const prompt = 'Draft an external-facing email to Maya Chen about Advance Northstar Expansion this week. Voice notes: Direct';
+
+  assert.equal(isDraftingRequest(prompt), true);
+  assert.equal(isDirectPipelineSummaryRequest(prompt), false);
+  assert.equal(isPipelineFollowUpRequest(prompt, historyText), false);
 });
 
 test('pipeline follow-up classifier requires explicit follow-up cues', () => {

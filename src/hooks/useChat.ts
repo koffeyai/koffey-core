@@ -179,6 +179,13 @@ export interface EmailDraftPayload {
   tone?: string;
   audience_scope?: 'internal' | 'external';
   voice_notes?: string;
+  style_profile?: {
+    tone?: string;
+    communication_style?: string;
+    energy_level?: string;
+    verbosity?: string;
+    source?: string;
+  };
   user_context?: string;
   deal_context?: { id: string; name: string; stage: string };
 }
@@ -323,6 +330,7 @@ interface ChatSession {
 }
 
 const PROCESSING_TIMEOUT_MS = 30_000;
+const RECENT_DUPLICATE_MESSAGE_MS = 15_000;
 
 function normalizeFeedback(raw: unknown): MessageFeedback | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
@@ -576,6 +584,33 @@ export const useChat = () => {
   const processingLockRef = useRef(false);
   const messageQueueRef = useRef<string[]>([]);
   const currentSessionIdRef = useRef<string | null>(null);
+  const lastSubmittedMessageRef = useRef<{ key: string; at: number } | null>(null);
+  const organizationId = currentOrganization?.organization_id;
+
+  const buildSubmissionKey = useCallback((content: string) => {
+    const normalized = content.replace(/\s+/g, ' ').trim().toLowerCase();
+    return `${organizationId || 'pending-org'}:${normalized}`;
+  }, [organizationId]);
+
+  const isRecentDuplicateSubmission = useCallback((content: string) => {
+    const key = buildSubmissionKey(content);
+    const previous = lastSubmittedMessageRef.current;
+    return !!previous
+      && previous.key === key
+      && Date.now() - previous.at < RECENT_DUPLICATE_MESSAGE_MS;
+  }, [buildSubmissionKey]);
+
+  const rememberSubmittedMessage = useCallback((content: string) => {
+    lastSubmittedMessageRef.current = {
+      key: buildSubmissionKey(content),
+      at: Date.now(),
+    };
+  }, [buildSubmissionKey]);
+
+  const isQueuedDuplicateSubmission = useCallback((content: string) => {
+    const key = buildSubmissionKey(content);
+    return messageQueueRef.current.some((queued) => buildSubmissionKey(queued) === key);
+  }, [buildSubmissionKey]);
 
   // Acquire lock atomically
   const acquireProcessingLock = useCallback(() => {
@@ -591,8 +626,6 @@ export const useChat = () => {
     setIsProcessing(false);
   }, []);
 
-  const organizationId = currentOrganization?.organization_id;
-  
   // Entity context for cross-message pronoun resolution (now with persistence!)
   const {
     entityContext,
@@ -1040,6 +1073,10 @@ export const useChat = () => {
     // Queue messages if already processing — prevents dropped rapid input
     // Use ref (not state) to avoid stale closure — isProcessing state lags behind re-renders
     if (processingLockRef.current) {
+      if (isRecentDuplicateSubmission(content) || isQueuedDuplicateSubmission(content)) {
+        console.log('📤 [useChat] Dropping duplicate queued message:', content);
+        return;
+      }
       console.log('📤 [useChat] Queuing message (processing in progress):', content);
       messageQueueRef.current.push(content);
       // Show the queued message in the UI immediately
@@ -1076,12 +1113,22 @@ export const useChat = () => {
       }
     }
 
+    if (isRecentDuplicateSubmission(content)) {
+      console.log('📤 [useChat] Dropping recent duplicate message:', content);
+      return;
+    }
+
     // Acquire processing lock atomically — queue if already processing
     if (!acquireProcessingLock()) {
+      if (isQueuedDuplicateSubmission(content)) {
+        console.log('📤 [useChat] Dropping duplicate queued message:', content);
+        return;
+      }
       console.log('📤 [useChat] Already processing — queueing message');
       messageQueueRef.current.push(content);
       return;
     }
+    rememberSubmittedMessage(content);
 
     // Create abort controller for this request
     abortControllerRef.current = new AbortController();
@@ -1645,6 +1692,7 @@ export const useChat = () => {
             execution: data?.meta?.execution || null,
             provenance: data?.provenance || null,
             queryAssist: data?.meta?.queryAssist || null,
+            emailDraft: emailDraft || null,
           };
           await supabase.functions.invoke('conversation-logger', {
             body: {
@@ -1690,7 +1738,7 @@ export const useChat = () => {
         }, 100);
       }
     }
-  }, [user, organizationId, currentSession, createSession, addMessage, removeMessage, orgLoading, openSelector, messages, acquireProcessingLock, releaseProcessingLock, clearPrimaryEntity, rememberActiveSession, restoreActiveSession, extractDealLinksFromResponse, extractAccountLinksFromResponse, extractRecordActionsFromResponse, hasMutationOperation, inferChangedEntityTypesFromOperations, extractFollowUpPromptsFromOperations]);
+  }, [user, organizationId, currentSession, createSession, addMessage, removeMessage, orgLoading, openSelector, messages, acquireProcessingLock, releaseProcessingLock, clearPrimaryEntity, rememberActiveSession, restoreActiveSession, isRecentDuplicateSubmission, isQueuedDuplicateSubmission, rememberSubmittedMessage, extractDealLinksFromResponse, extractAccountLinksFromResponse, extractRecordActionsFromResponse, hasMutationOperation, inferChangedEntityTypesFromOperations, extractFollowUpPromptsFromOperations]);
 
   const sendEmailDraft = useCallback(async (draft: EmailDraftPayload): Promise<boolean> => {
     if (!draft?.to_email || !draft.subject) {
@@ -1837,6 +1885,7 @@ export const useChat = () => {
 
     // Flush message queue so old messages don't arrive in new session
     messageQueueRef.current = [];
+    lastSubmittedMessageRef.current = null;
 
     // Reset processing state
     releaseProcessingLock();

@@ -4,9 +4,9 @@ export interface UserContentPreferences {
   organization_id?: string;
   
   // Basic AI Style (existing)
-  tone: 'casual' | 'professional' | 'formal' | 'friendly' | 'concise' | 'detailed';
-  verbosity: 'minimal' | 'balanced' | 'comprehensive';
-  format_preference: 'bullet_points' | 'paragraphs' | 'mixed';
+  tone: 'casual' | 'professional' | 'formal';
+  verbosity: 'concise' | 'balanced' | 'detailed';
+  format_preference: 'bullets' | 'paragraphs' | 'mixed';
   custom_instructions: string | null;
   
   // Communication Style (new)

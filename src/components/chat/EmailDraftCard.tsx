@@ -11,26 +11,37 @@ import type { EmailDraftPayload } from '@/hooks/useChat';
 interface EmailDraftCardProps {
   draft: EmailDraftPayload;
   onSend: (draft: EmailDraftPayload) => Promise<boolean> | boolean;
-  onApplyVoiceNotes?: (draft: EmailDraftPayload, voiceNotes: string) => Promise<void> | void;
   onCancel: () => void;
   disabled?: boolean;
+}
+
+function formatStyleValue(value: unknown): string {
+  return String(value || '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+    .trim();
 }
 
 export const EmailDraftCard: React.FC<EmailDraftCardProps> = ({
   draft,
   onSend,
-  onApplyVoiceNotes,
   onCancel,
   disabled = false,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [isApplyingVoice, setIsApplyingVoice] = useState(false);
   const [isSent, setIsSent] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
   const [editedSubject, setEditedSubject] = useState(draft.subject);
   const [editedBody, setEditedBody] = useState(draft.body);
-  const [voiceNotes, setVoiceNotes] = useState(draft.voice_notes || '');
+
+  const styleProfile = draft.style_profile || {};
+  const styleItems = [
+    styleProfile.communication_style ? `Approach: ${formatStyleValue(styleProfile.communication_style)}` : '',
+    draft.tone || styleProfile.tone ? `Tone: ${formatStyleValue(draft.tone || styleProfile.tone)}` : '',
+    styleProfile.energy_level ? `Energy: ${formatStyleValue(styleProfile.energy_level)}` : '',
+    styleProfile.verbosity ? `Length: ${formatStyleValue(styleProfile.verbosity)}` : '',
+  ].filter(Boolean);
 
   const handleSend = async () => {
     setIsSending(true);
@@ -39,7 +50,6 @@ export const EmailDraftCard: React.FC<EmailDraftCardProps> = ({
         ...draft,
         subject: editedSubject,
         body: editedBody,
-        voice_notes: voiceNotes.trim() || draft.voice_notes,
       });
       setIsSent(success !== false);
     } finally {
@@ -62,22 +72,6 @@ export const EmailDraftCard: React.FC<EmailDraftCardProps> = ({
     await navigator.clipboard.writeText(text);
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2000);
-  };
-
-  const handleApplyVoiceNotes = async () => {
-    const trimmed = voiceNotes.trim();
-    if (!trimmed || !onApplyVoiceNotes) return;
-    setIsApplyingVoice(true);
-    try {
-      await onApplyVoiceNotes({
-        ...draft,
-        subject: editedSubject,
-        body: editedBody,
-        voice_notes: trimmed,
-      }, trimmed);
-    } finally {
-      setIsApplyingVoice(false);
-    }
   };
 
   return (
@@ -147,42 +141,24 @@ export const EmailDraftCard: React.FC<EmailDraftCardProps> = ({
           )}
         </div>
 
-        {/* Voice notes */}
+        {/* Saved writing style */}
         <div className="rounded-md border bg-background/60 p-3 space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-sm font-medium text-muted-foreground">Voice notes</span>
+            <span className="text-sm font-medium text-muted-foreground">Writing style</span>
             {draft.audience_scope && (
               <Badge variant="outline" className="text-[10px] capitalize">
                 {draft.audience_scope}-facing
               </Badge>
             )}
           </div>
-          <Textarea
-            value={voiceNotes}
-            onChange={(e) => setVoiceNotes(e.target.value)}
-            rows={3}
-            className="text-sm"
-            placeholder="Concise, warm, direct; avoid hype; sign off with your preferred name."
-            disabled={disabled || isSending || isSent || isApplyingVoice}
-          />
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs text-muted-foreground">Style guidance only. Not included in the sent email.</p>
-            {onApplyVoiceNotes && (
-              <Button
-                onClick={handleApplyVoiceNotes}
-                variant="outline"
-                size="sm"
-                disabled={disabled || isSending || isSent || isApplyingVoice || !voiceNotes.trim()}
-              >
-                {isApplyingVoice ? (
-                  <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-                ) : (
-                  <Edit3 className="h-4 w-4 mr-1.5" />
-                )}
-                Regenerate
-              </Button>
-            )}
+          <div className="flex flex-wrap gap-1.5">
+            {(styleItems.length ? styleItems : ['Tone: Professional']).map((item) => (
+              <Badge key={item} variant="secondary" className="text-[10px]">
+                {item}
+              </Badge>
+            ))}
           </div>
+          <p className="text-xs text-muted-foreground">From your saved settings. Edit the draft text for one-off changes.</p>
         </div>
 
         {/* Action buttons */}

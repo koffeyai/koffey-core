@@ -35,6 +35,10 @@ Examples:
             type: 'string',
             description: 'Name of the contact to search for.',
           },
+          contact_email: {
+            type: 'string',
+            description: 'Existing email address of the contact to update. Use when the user identifies the contact by email.',
+          },
           updates: {
             type: 'object',
             description: 'Fields to update',

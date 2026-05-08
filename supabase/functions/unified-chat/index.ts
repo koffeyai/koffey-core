@@ -471,6 +471,29 @@ async function clearPendingDraftEmail(
   }
 }
 
+function buildEmailDraftMeta(result: any) {
+  if (!result?.isDraft) return null;
+
+  return {
+    id: crypto.randomUUID(),
+    to_email: result.recipientEmail || result.recipient_email || '',
+    to_name: result.recipientName || result.recipient_name || '',
+    subject: result.subject || '',
+    body: result.message || result.body || '',
+    tone: result.tone || result.emailType || result.email_type || 'professional',
+    audience_scope: result.audienceScope || result.audience_scope || 'external',
+    voice_notes: result.voiceNotes || result.voice_notes || '',
+    style_profile: result.style_profile || result.styleProfile || undefined,
+    user_context: result.user_context || result.context || '',
+    deal_context: result.dealContext || result.deal_context || undefined,
+  };
+}
+
+function attachEmailDraftMeta(meta: Record<string, unknown>, result: any) {
+  const emailDraft = buildEmailDraftMeta(result);
+  if (emailDraft) meta.emailDraft = emailDraft;
+}
+
 async function storePendingDealUpdate(
   supabase: any,
   sessionId: string | undefined,
@@ -1710,7 +1733,10 @@ const handler = async (req: Request): Promise<Response> => {
     const isExhaustiveList = /\b(all\s+(my\s+)?deals|every\s+(single\s+)?deal|list\s+all|show\s+all)\b/i.test(message);
     const isPipelineLike = !isExhaustiveList && !documentDetection.isDocument && !shouldBypassPipelineRetrievalForMutation && useLegacyPipelineShortcut
       && (authoritativeIntent.intent === 'pipeline_summary' || authoritativeIntent.intent === 'pipeline_window' || isDirectPipelineSummaryRequest(message));
-    const followupPipeline = !documentDetection.isDocument && isPipelineFollowUpRequest(message, historyText);
+    const followupPipeline = !documentDetection.isDocument
+      && !shouldBypassPipelineRetrievalForMutation
+      && authoritativeIntent.intent !== 'drafting'
+      && isPipelineFollowUpRequest(message, historyText);
     const analyticsPageType = String(normalizedPageContext?.pageType || normalizedPageContext?.type || '').toLowerCase();
     const isAnalyticsDashboardReview = (analyticsPageType === 'analytics' || analyticsPageType === 'analytics_dashboard')
       && /\b(explain|review|analy[sz]e|attention|pay attention|dashboard|view|what should i)\b/i.test(message || '')
@@ -3125,6 +3151,7 @@ const handler = async (req: Request): Promise<Response> => {
             if (claim.state === 'completed') {
               const result = claim.responsePayload;
               crmOperations.push({ tool: toolName, args, result, idempotency: 'replayed' });
+              attachEmailDraftMeta(meta, result);
               return { role: 'tool', tool_call_id: tc.id, content: serializeToolResultForPrompt(result) };
             }
 
@@ -3183,20 +3210,7 @@ const handler = async (req: Request): Promise<Response> => {
               email_draft: preview.email_draft || null,
             };
           }
-          if (result?.isDraft) {
-            meta.emailDraft = {
-              id: crypto.randomUUID(),
-              to_email: result.recipientEmail || result.recipient_email || '',
-              to_name: result.recipientName || result.recipient_name || '',
-              subject: result.subject || '',
-              body: result.message || result.body || '',
-              tone: result.tone || result.emailType || result.email_type || 'professional',
-              audience_scope: result.audienceScope || result.audience_scope || 'external',
-              voice_notes: result.voiceNotes || result.voice_notes || '',
-              user_context: result.user_context || result.context || '',
-              deal_context: result.dealContext || result.deal_context || undefined,
-            };
-          }
+          attachEmailDraftMeta(meta, result);
           if (result?.needsScopeUpgrade) {
             meta.needsScopeUpgrade = {
               scope: result.requiredScope || 'https://www.googleapis.com/auth/gmail.send',
@@ -3333,6 +3347,9 @@ const handler = async (req: Request): Promise<Response> => {
           || result?._needsLossReason
           || result?.success === false
         ));
+        if (!meta.emailDraft && successfulDraftEmailOp) {
+          attachEmailDraftMeta(meta, successfulDraftEmailOp.result);
+        }
         if (meta.compoundCreateRouterHit) {
           response = buildCompoundCreateSummary(crmOperations as any, message);
         } else if (successfulDraftEmailOp) {

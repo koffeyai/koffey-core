@@ -9602,6 +9602,7 @@ CREATE TABLE IF NOT EXISTS "public"."user_prompt_preferences" (
     "communication_style" "text" DEFAULT 'professional'::"text",
     "energy_level" "text" DEFAULT 'balanced'::"text",
     "signature_phrases" "text"[] DEFAULT '{}'::"text"[],
+    "avoid_phrases" "text"[] DEFAULT '{}'::"text"[],
     "rep_title" "text",
     "rep_bio" "text",
     "rep_photo_path" "text",
@@ -9628,6 +9629,10 @@ COMMENT ON COLUMN "public"."user_prompt_preferences"."energy_level" IS 'Emotiona
 
 
 COMMENT ON COLUMN "public"."user_prompt_preferences"."signature_phrases" IS 'Phrases the rep likes to use naturally';
+
+
+
+COMMENT ON COLUMN "public"."user_prompt_preferences"."avoid_phrases" IS 'Phrases the rep does not want the AI to use on their behalf';
 
 
 
@@ -18842,7 +18847,6 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TAB
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES  TO "anon";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES  TO "authenticated";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES  TO "service_role";
-
 
 
 

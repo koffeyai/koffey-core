@@ -36,10 +36,15 @@ class QueryMock {
     if (this.table === 'accounts') return { data: this.state.account, error: null };
     if (this.table === 'deal_contacts') return { data: this.state.dealContacts, error: null };
     if (this.table === 'activities') return { data: this.state.activities, error: null };
+    if (this.table === 'user_prompt_preferences') return { data: this.state.userPromptPreferences || null, error: null };
     return { data: null, error: null };
   }
 
   single() {
+    return Promise.resolve(this.result());
+  }
+
+  maybeSingle() {
     return Promise.resolve(this.result());
   }
 
@@ -109,6 +114,50 @@ test('draft_email returns a complete structured draft for the chat approval card
     name: 'Example Labs - $35K',
     stage: 'prospecting',
   });
+});
+
+test('draft_email applies saved per-user writing style preferences', async () => {
+  const result = await draftEmail.execute({
+    supabase: buildSupabaseMock({
+      userPromptPreferences: {
+        tone: 'casual',
+        communication_style: 'direct',
+        energy_level: 'warm_enthusiastic',
+        verbosity: 'concise',
+        format_preference: 'mixed',
+        custom_instructions: 'Sign off as Alex',
+        signature_phrases: ['Here is the thing'],
+        avoid_phrases: ['circle back'],
+      },
+      contact: {
+        id: 'contact-style',
+        full_name: 'Ava Stone',
+        email: 'ava@example.com',
+        company: 'Example Labs',
+      },
+      activities: [],
+    }),
+    organizationId: 'org-1',
+    userId: 'user-style',
+    args: {
+      recipient_name: 'Ava Stone',
+      recipient_email: 'ava@example.com',
+      email_type: 'follow_up',
+      context: 'confirm timeline and next steps',
+      audience_scope: 'external',
+    },
+    entityContext: {},
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.tone, 'casual');
+  assert.equal(result.voice_notes, null);
+  assert.equal(result.style_profile.source, 'user_settings');
+  assert.equal(result.style_profile.communication_style, 'direct');
+  assert.equal(result.style_profile.energy_level, 'warm_enthusiastic');
+  assert.match(result.message, /Hi Ava,/);
+  assert.match(result.message, /Alex/);
+  assert.doesNotMatch(result.message, /Sign off as Alex|Here is the thing|circle back/i);
 });
 
 test('draft_email uses associated deal contact when the prompt omits a recipient', async () => {

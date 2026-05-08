@@ -9,9 +9,9 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/hooks/use-toast';
 
 interface UserPrefs {
-  tone: 'professional' | 'friendly' | 'concise' | 'detailed';
-  verbosity: 'minimal' | 'balanced' | 'comprehensive';
-  format_preference: 'bullet_points' | 'paragraphs' | 'mixed';
+  tone: 'casual' | 'professional' | 'formal';
+  verbosity: 'concise' | 'balanced' | 'detailed';
+  format_preference: 'bullets' | 'paragraphs' | 'mixed';
   custom_instructions: string | null;
 }
 
@@ -133,10 +133,9 @@ export const UserPromptPreferences: React.FC = () => {
             className="grid grid-cols-2 gap-3"
           >
             {[
-              { value: 'professional', label: 'Professional', desc: 'Formal and business-focused' },
-              { value: 'friendly', label: 'Friendly', desc: 'Warm and conversational' },
-              { value: 'concise', label: 'Concise', desc: 'Brief and to-the-point' },
-              { value: 'detailed', label: 'Detailed', desc: 'Thorough explanations' },
+              { value: 'casual', label: 'Casual', desc: 'Relaxed and informal' },
+              { value: 'professional', label: 'Professional', desc: 'Business-appropriate' },
+              { value: 'formal', label: 'Formal', desc: 'Polished and executive' },
             ].map((option) => (
               <Label
                 key={option.value}
@@ -165,9 +164,9 @@ export const UserPromptPreferences: React.FC = () => {
             className="grid grid-cols-3 gap-3"
           >
             {[
-              { value: 'minimal', label: 'Minimal', desc: 'Just the essentials' },
+              { value: 'concise', label: 'Concise', desc: 'Just the essentials' },
               { value: 'balanced', label: 'Balanced', desc: 'Right amount of detail' },
-              { value: 'comprehensive', label: 'Comprehensive', desc: 'Full context' },
+              { value: 'detailed', label: 'Detailed', desc: 'Full context' },
             ].map((option) => (
               <Label
                 key={option.value}
@@ -194,7 +193,7 @@ export const UserPromptPreferences: React.FC = () => {
             className="grid grid-cols-3 gap-3"
           >
             {[
-              { value: 'bullet_points', label: 'Bullets', desc: 'Lists & points' },
+              { value: 'bullets', label: 'Bullets', desc: 'Lists & points' },
               { value: 'paragraphs', label: 'Paragraphs', desc: 'Flowing text' },
               { value: 'mixed', label: 'Mixed', desc: 'Context-dependent' },
             ].map((option) => (

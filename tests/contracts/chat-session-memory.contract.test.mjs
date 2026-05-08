@@ -87,3 +87,13 @@ test('chat context is restored from persisted same-day messages when client stat
   assert.match(logger, /updated_at: new Date\(\)\.toISOString\(\)/);
   assert.match(migration, /CREATE TRIGGER touch_chat_session_on_message/);
 });
+
+test('chat sender drops rapid duplicate submissions before persistence', () => {
+  const useChat = readFileSync(path.join(repoRoot, 'src/hooks/useChat.ts'), 'utf8');
+
+  assert.match(useChat, /RECENT_DUPLICATE_MESSAGE_MS/);
+  assert.match(useChat, /lastSubmittedMessageRef/);
+  assert.match(useChat, /isRecentDuplicateSubmission\(content\)/);
+  assert.match(useChat, /Dropping recent duplicate message/);
+  assert.match(useChat, /Dropping duplicate queued message/);
+});

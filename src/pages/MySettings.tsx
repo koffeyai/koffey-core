@@ -33,14 +33,13 @@ import { MessagingSetup } from '@/components/settings/MessagingSetup';
 const TONE_OPTIONS = [
   { value: 'casual', label: 'Casual', description: 'Relaxed and informal' },
   { value: 'professional', label: 'Professional', description: 'Business-appropriate' },
-  { value: 'friendly', label: 'Friendly', description: 'Warm and personable' },
-  { value: 'concise', label: 'Concise', description: 'Brief and efficient' },
+  { value: 'formal', label: 'Formal', description: 'Polished and executive' },
 ];
 
 const VERBOSITY_OPTIONS = [
-  { value: 'minimal', label: 'Minimal', description: 'Just the essentials' },
+  { value: 'concise', label: 'Concise', description: 'Just the essentials' },
   { value: 'balanced', label: 'Balanced', description: 'Right amount of detail' },
-  { value: 'comprehensive', label: 'Comprehensive', description: 'Full context included' },
+  { value: 'detailed', label: 'Detailed', description: 'Full context included' },
 ];
 
 export const MySettingsPage: React.FC = () => {
@@ -121,7 +120,7 @@ export const MySettingsPage: React.FC = () => {
             </TabsTrigger>
             <TabsTrigger value="communication" className="gap-2">
               <MessageSquare className="h-4 w-4" />
-              <span className="hidden sm:inline">Style</span>
+              <span className="hidden sm:inline">Writing</span>
             </TabsTrigger>
             <TabsTrigger value="voice" className="gap-2">
               <Mic className="h-4 w-4" />
@@ -220,9 +219,9 @@ export const MySettingsPage: React.FC = () => {
           <TabsContent value="communication" className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>Communication Style</CardTitle>
+                <CardTitle>Writing Style</CardTitle>
                 <CardDescription>
-                  How the AI should frame your messages and presentations
+                  Saved per-user defaults for drafted emails, messages, and presentations
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-8">

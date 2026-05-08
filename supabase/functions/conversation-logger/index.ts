@@ -138,6 +138,45 @@ function sanitizeAiMetadata(value: unknown): Record<string, unknown> {
 
   const out: Record<string, unknown> = {};
 
+  if (raw.emailDraft && typeof raw.emailDraft === 'object' && !Array.isArray(raw.emailDraft)) {
+    const draft = raw.emailDraft as Record<string, unknown>;
+    const styleProfile = draft.style_profile && typeof draft.style_profile === 'object' && !Array.isArray(draft.style_profile)
+      ? draft.style_profile as Record<string, unknown>
+      : null;
+    const dealContext = draft.deal_context && typeof draft.deal_context === 'object' && !Array.isArray(draft.deal_context)
+      ? draft.deal_context as Record<string, unknown>
+      : null;
+    out.emailDraft = {
+      id: typeof draft.id === 'string' ? draft.id.slice(0, 80) : null,
+      to_email: typeof draft.to_email === 'string' ? draft.to_email.slice(0, 254) : '',
+      to_name: typeof draft.to_name === 'string' ? draft.to_name.slice(0, 200) : '',
+      subject: typeof draft.subject === 'string' ? draft.subject.slice(0, 500) : '',
+      body: typeof draft.body === 'string' ? draft.body.slice(0, 12000) : '',
+      tone: typeof draft.tone === 'string' ? draft.tone.slice(0, 40) : null,
+      audience_scope: draft.audience_scope === 'internal' || draft.audience_scope === 'external'
+        ? draft.audience_scope
+        : null,
+      voice_notes: typeof draft.voice_notes === 'string' ? draft.voice_notes.slice(0, 500) : '',
+      style_profile: styleProfile
+        ? {
+            tone: typeof styleProfile.tone === 'string' ? styleProfile.tone.slice(0, 40) : null,
+            communication_style: typeof styleProfile.communication_style === 'string' ? styleProfile.communication_style.slice(0, 40) : null,
+            energy_level: typeof styleProfile.energy_level === 'string' ? styleProfile.energy_level.slice(0, 40) : null,
+            verbosity: typeof styleProfile.verbosity === 'string' ? styleProfile.verbosity.slice(0, 40) : null,
+            source: typeof styleProfile.source === 'string' ? styleProfile.source.slice(0, 40) : null,
+          }
+        : null,
+      user_context: typeof draft.user_context === 'string' ? draft.user_context.slice(0, 1200) : '',
+      deal_context: dealContext
+        ? {
+            id: typeof dealContext.id === 'string' ? dealContext.id.slice(0, 80) : null,
+            name: typeof dealContext.name === 'string' ? dealContext.name.slice(0, 200) : null,
+            stage: typeof dealContext.stage === 'string' ? dealContext.stage.slice(0, 80) : null,
+          }
+        : null,
+    };
+  }
+
   if (raw.verification && typeof raw.verification === 'object' && !Array.isArray(raw.verification)) {
     const verification = raw.verification as Record<string, unknown>;
     out.verification = {

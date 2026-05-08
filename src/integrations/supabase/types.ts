@@ -5629,6 +5629,7 @@ export type Database = {
           rep_linkedin_url: string | null
           rep_photo_path: string | null
           rep_title: string | null
+          avoid_phrases: string[] | null
           signature_phrases: string[] | null
           tone: string | null
           updated_at: string | null
@@ -5649,6 +5650,7 @@ export type Database = {
           rep_linkedin_url?: string | null
           rep_photo_path?: string | null
           rep_title?: string | null
+          avoid_phrases?: string[] | null
           signature_phrases?: string[] | null
           tone?: string | null
           updated_at?: string | null
@@ -5669,6 +5671,7 @@ export type Database = {
           rep_linkedin_url?: string | null
           rep_photo_path?: string | null
           rep_title?: string | null
+          avoid_phrases?: string[] | null
           signature_phrases?: string[] | null
           tone?: string | null
           updated_at?: string | null

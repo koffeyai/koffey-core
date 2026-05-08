@@ -213,6 +213,42 @@ function extractContactEmailFromMessage(message) {
   return match?.[0] ? match[0].toLowerCase() : null;
 }
 
+function normalizePersonNameCasing(value) {
+  return normalizeWhitespace(value)
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => /^[a-z][a-z'.-]*$/i.test(part)
+      ? part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()
+      : part)
+    .join(' ');
+}
+
+function buildContactNameUpdates(value) {
+  const name = sanitizeContactName(value);
+  if (!name || !looksLikeLooseContactName(name)) return null;
+  const parts = normalizePersonNameCasing(name).split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return null;
+  return {
+    first_name: parts[0],
+    ...(parts.length > 1 ? { last_name: parts.slice(1).join(' ') } : {}),
+  };
+}
+
+function extractEmailIdentifiedContactNameUpdate(rawMessage) {
+  const email = extractContactEmailFromMessage(rawMessage);
+  if (!email) return null;
+
+  const escapedEmail = escapeRegExp(email);
+  const nameMatch = rawMessage.match(new RegExp(`\\b(?:update|change|set)\\s+(?:the\\s+)?(?:contact\\s+)?(?:with\\s+)?(?:email\\s+)?${escapedEmail}\\s+(?:to|as)\\s+(.+)$`, 'i'));
+  const updates = buildContactNameUpdates(nameMatch?.[1] || '');
+  if (!updates) return null;
+
+  return {
+    contact_email: email,
+    updates,
+  };
+}
+
 function extractPendingContactDetailsFromMessage(message) {
   const rawMessage = normalizeWhitespace(message);
   if (!rawMessage) return {};
@@ -907,6 +943,8 @@ function extractUpdateContactNameFromMessage(message) {
 export function extractUpdateContactArgsFromMessage(message) {
   const rawMessage = normalizeWhitespace(message);
   if (!rawMessage) return null;
+  const emailIdentifiedNameUpdate = extractEmailIdentifiedContactNameUpdate(rawMessage);
+  if (emailIdentifiedNameUpdate) return emailIdentifiedNameUpdate;
   if (!UPDATE_CONTACT_PATTERNS.some((pattern) => pattern.test(rawMessage))) return null;
 
   const updates = {};
