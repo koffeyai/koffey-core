@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { EnhancedCRMManager } from '@/components/crm/EnhancedCRMManager';
 import { RecentlyPromotedBanner } from '@/components/crm/RecentlyPromotedBanner';
-import { LEAD_STATUSES } from '@/constants/contactStatus';
 
 interface ContactsManagerProps {
   embedded?: boolean;
@@ -9,8 +8,8 @@ interface ContactsManagerProps {
 }
 
 /**
- * ContactsManager - Displays contacts excluding lead statuses
- * Shows established contacts (prospects, customers, partners, etc.)
+ * ContactsManager - Displays all people records.
+ * Leads remains the focused qualification view for lead, MQL, and SQL statuses.
  */
 export const ContactsManager: React.FC<ContactsManagerProps> = ({ 
   embedded = false, 
@@ -29,9 +28,6 @@ export const ContactsManager: React.FC<ContactsManagerProps> = ({
         entityType="contacts"
         title="Contacts"
         description="Manage your customer and partner relationships"
-        defaultFilters={{
-          status_not_in: [...LEAD_STATUSES] // Exclude lead, mql, sql statuses
-        }}
       />
     </div>
   );

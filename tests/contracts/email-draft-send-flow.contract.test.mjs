@@ -22,6 +22,7 @@ test('email draft card sends through direct audited send path instead of chat re
   assert.match(useChat, /needsScopeUpgrade: requiredScope/);
   assert.match(useChat, /buildEmailSendFeedback/);
   assert.match(useChat, /Gmail send access is not connected yet/);
+  assert.match(useChat, /CONTACT_NAME_MISMATCH/);
   assert.match(useChat, /I logged the email activity in CRM/);
   assert.match(chatUi, /connectGoogleScope\(/);
   assert.match(chatUi, /Gmail permission needed/);
@@ -52,6 +53,8 @@ test('audited email sender distinguishes missing scopes from bad Google tokens',
   assert.match(sender, /GOOGLE_RECONNECT_REQUIRED/);
   assert.match(sender, /GOOGLE_OAUTH_CONFIGURATION_ERROR/);
   assert.match(sender, /NEEDS_GMAIL_SCOPE/);
+  assert.match(sender, /CONTACT_NAME_MISMATCH/);
+  assert.match(sender, /namesConflict/);
   assert.match(sender, /missingScopes: \[GMAIL_SEND_SCOPE\]/);
   assert.match(sender, /GMAIL_SEND_FAILED/);
   assert.doesNotMatch(sender, /TOKEN_EXPIRED/);

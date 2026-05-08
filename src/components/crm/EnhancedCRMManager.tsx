@@ -131,6 +131,7 @@ export const EnhancedCRMManager: React.FC<EnhancedCRMManagerProps> = ({
     const statusIn = defaultFilters?.status_in as string[] | undefined;
     return statusIn?.some((s: string) => (LEAD_STATUSES as readonly string[]).includes(s)) ?? false;
   }, [entityType, defaultFilters]);
+  const defaultContactStatus = isLeadsView ? 'lead' : 'prospect';
 
   // Contacts view (non-leads) also supports row expansion for AI memory
   const isContactsView = entityType === 'contacts' && !isLeadsView;
@@ -260,7 +261,7 @@ export const EnhancedCRMManager: React.FC<EnhancedCRMManagerProps> = ({
             open={dialogOpen}
             onOpenChange={setDialogOpen}
             onSave={handleSave}
-            defaultStatus={isLeadsView ? 'lead' : 'prospect'}
+            defaultStatus={defaultContactStatus}
           />
         );
       case 'deals':
@@ -389,7 +390,7 @@ export const EnhancedCRMManager: React.FC<EnhancedCRMManagerProps> = ({
                       first_name: row['first_name'] || '', last_name: row['last_name'] || '',
                       email: row['email'] || null, phone: row['phone'] || null,
                       company: row['company'] || null, title: row['title'] || null,
-                      status: 'lead', assigned_to: userId,
+                      status: defaultContactStatus, assigned_to: userId,
                     });
                   } else if (entityType === 'accounts') {
                     await supabase.from('accounts').insert({

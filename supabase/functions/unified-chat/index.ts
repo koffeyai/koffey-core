@@ -210,6 +210,135 @@ function mergeConversationHistory(
   return merged.slice(-80);
 }
 
+function extractEmailsFromText(text: string): string[] {
+  const matches = String(text || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [];
+  const seen = new Set<string>();
+  return matches
+    .map((email) => email.toLowerCase())
+    .filter((email) => {
+      if (seen.has(email)) return false;
+      seen.add(email);
+      return true;
+    });
+}
+
+function extractEmailsNearNameFromText(text: string, requestedName: string): string[] {
+  const source = String(text || '');
+  const tokens = normalizeContactLookupTerm(requestedName)
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((token) => token.length > 1 && !token.includes('@'));
+  if (!tokens.length) return [];
+
+  const emailRegex = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+  const matches: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = emailRegex.exec(source)) !== null) {
+    const start = Math.max(0, match.index - 180);
+    const end = Math.min(source.length, match.index + match[0].length + 180);
+    const windowText = source.slice(start, end).toLowerCase();
+    const allTokensNearby = tokens.every((token) => windowText.includes(token));
+    const looksLikeIdentityContext = /\b(?:sent to|email:|mailto:|recipient)\b/i.test(windowText);
+    const looksLikeSearchExplanation = /\bsearch(?:ing)?\s+(?:for|by|the)\b/i.test(windowText);
+    if (allTokensNearby && looksLikeIdentityContext && !looksLikeSearchExplanation) {
+      matches.push(match[0].toLowerCase());
+    }
+  }
+
+  return extractEmailsFromText(matches.join(' '));
+}
+
+function normalizeContactLookupTerm(value: string): string {
+  return String(value || '')
+    .replace(/\b(?:the|teh|contacts?|page|crm|record|row)\b/gi, ' ')
+    .replace(/[^a-z0-9@._+\-\s]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractContactsPageVisibilityQuery(message: string): string | null {
+  const raw = String(message || '').trim();
+  if (!/\bcontacts?\s+page\b/i.test(raw)) return null;
+  if (!/\b(?:show(?:ing)?\s+up|appear(?:ing)?|visible|missing|find|see)\b/i.test(raw)) return null;
+
+  const leadingMatch = raw.match(
+    /\b(?:how\s+come|why(?:\s+(?:is|isn't|isnt|does|doesn't|doesnt))?)\s+(.+?)\s+(?:is\s+)?(?:not\s+)?(?:show(?:ing)?\s+up|show\s+up|appear(?:ing)?|visible|missing|on\s+the\s+contacts?\s+page)\b/i,
+  );
+  const candidate = leadingMatch?.[1]
+    || raw.replace(/\b(?:how\s+come|why|is|isn't|isnt|does|doesn't|doesnt|not|show(?:ing)?\s+up|appear(?:ing)?|visible|missing|find|see|on|in|the|teh|contacts?|page)\b/gi, ' ');
+
+  const normalized = normalizeContactLookupTerm(candidate);
+  return normalized || null;
+}
+
+async function lookupContactsForVisibility(admin: any, organizationId: string, query: string, historyText: string) {
+  const rows: any[] = [];
+  const seen = new Set<string>();
+  const addRows = (records: any[] | null | undefined) => {
+    for (const row of records || []) {
+      if (!row?.id || seen.has(row.id)) continue;
+      seen.add(row.id);
+      rows.push(row);
+    }
+  };
+
+  const safeQuery = normalizeContactLookupTerm(query);
+  if (safeQuery) {
+    const { data } = await admin
+      .from('contacts')
+      .select('id, full_name, first_name, last_name, email, company, status, account_id, accounts(name)')
+      .eq('organization_id', organizationId)
+      .or(`full_name.ilike.%${safeQuery}%,first_name.ilike.%${safeQuery}%,last_name.ilike.%${safeQuery}%,email.ilike.%${safeQuery}%,company.ilike.%${safeQuery}%`)
+      .order('updated_at', { ascending: false })
+      .limit(10);
+    addRows(data);
+  }
+
+  const historyEmails = extractEmailsNearNameFromText(historyText, query).slice(-3).reverse();
+  for (const email of historyEmails) {
+    const { data } = await admin
+      .from('contacts')
+      .select('id, full_name, first_name, last_name, email, company, status, account_id, accounts(name)')
+      .eq('organization_id', organizationId)
+      .ilike('email', email)
+      .order('updated_at', { ascending: false })
+      .limit(5);
+    addRows(data);
+  }
+
+  return rows;
+}
+
+function buildContactsPageVisibilityResponse(requestedName: string, contacts: any[]) {
+  if (!contacts.length) {
+    return {
+      response: `I searched CRM contacts and did not find a row whose stored name matches "${requestedName}". If this came from a recent email draft, check whether that email is attached to a different contact name, then update the contact record or search by email. No data was changed.`,
+      recordsFound: 0,
+    };
+  }
+
+  const contact = contacts[0];
+  const storedName = contact.full_name
+    || [contact.first_name, contact.last_name].filter(Boolean).join(' ')
+    || contact.email
+    || 'this contact';
+  const accountName = contact.accounts?.name || contact.company || 'no linked account';
+  const status = contact.status || 'no status';
+  const requestedNormalized = normalizeContactLookupTerm(requestedName).toLowerCase();
+  const storedNormalized = normalizeContactLookupTerm(storedName).toLowerCase();
+  const mismatchNote = requestedNormalized && storedNormalized && requestedNormalized !== storedNormalized
+    ? ` The CRM row is stored as ${storedName}, so searching for "${requestedName}" by display name may not match until the contact is updated.`
+    : '';
+  const viewNote = ['lead', 'mql', 'sql'].includes(String(status).toLowerCase())
+    ? ` It currently has status "${status}", so it also appears in Leads. Contacts now shows all people records; refresh the Contacts page and search by the stored name or email.`
+    : ' It should be visible on Contacts after refresh; search by the stored name or email if the table is filtered.';
+
+  return {
+    response: `I found the matching CRM contact: ${storedName} (${contact.email || 'no email'}) at ${accountName}.${mismatchNote}${viewNote} No data was changed.`,
+    recordsFound: contacts.length,
+  };
+}
+
 async function loadEffectiveConversationHistory(params: {
   admin: any;
   sessionId: string | null;
@@ -824,6 +953,57 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     const historyText = effectiveConversationHistory.slice(-6).map((m: any) => String(m?.content || '')).join(' ').toLowerCase();
+    const contactsPageVisibilityQuery = extractContactsPageVisibilityQuery(message);
+    if (contactsPageVisibilityQuery) {
+      const visibilityContacts = await lookupContactsForVisibility(admin, organizationId, contactsPageVisibilityQuery, historyText);
+      const visibilitySummary = buildContactsPageVisibilityResponse(contactsPageVisibilityQuery, visibilityContacts);
+      const visibilityResult = {
+        results: visibilityContacts,
+        count: visibilityContacts.length,
+        entity_type: 'contacts',
+        __citationRows: visibilityContacts.slice(0, 8),
+        __forceNoCitations: visibilityContacts.length === 0,
+      };
+      const visibilityOperations = [{
+        tool: 'search_crm',
+        args: { entity_type: 'contacts', query: contactsPageVisibilityQuery },
+        result: visibilityResult,
+      }];
+      const visibilityCitations = collectCitationsFromToolExecution(
+        'search_crm',
+        { entity_type: 'contacts', query: contactsPageVisibilityQuery },
+        visibilityResult,
+      );
+      const processing = Date.now() - started;
+      return new Response(JSON.stringify({
+        response: visibilitySummary.response,
+        crmOperations: visibilityOperations,
+        citations: visibilityContacts.length ? visibilityCitations : [],
+        verification: {
+          is_true: visibilityContacts.length > 0,
+          citation_count: visibilityContacts.length ? visibilityCitations.length : 0,
+          policy: 'strict',
+          source_status: visibilityContacts.length ? 'source_backed' : 'no_results',
+          blocking_failure: false,
+        },
+        meta: {
+          channel: resolvedChannel,
+          execution: {
+            deterministicPathUsed: true,
+            path: 'contacts_page_visibility',
+            groundingState: visibilityContacts.length ? 'verified' : 'no_results',
+          },
+        },
+        provenance: {
+          source: 'database',
+          recordsFound: visibilitySummary.recordsFound,
+          searchPerformed: true,
+          confidence: 'high',
+          processingTimeMs: processing,
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+    }
+
     const intentContext = {
       entityContext: resolvedEntityContext,
       activeContext: resolvedActiveContext,

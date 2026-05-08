@@ -62,6 +62,29 @@ function isReconnectRequiredGoogleError(errorCode?: string): boolean {
   return errorCode === 'invalid_grant' || errorCode === 'unauthorized_client';
 }
 
+function normalizePersonName(value?: string | null): string {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function namesConflict(requestedName?: string | null, storedName?: string | null): boolean {
+  if (String(requestedName || '').includes('@')) return false;
+  const requested = normalizePersonName(requestedName);
+  const stored = normalizePersonName(storedName);
+  if (!requested || !stored) return false;
+  if (requested === stored) return false;
+
+  const requestedTokens = requested.split(' ').filter(Boolean);
+  const storedTokens = new Set(stored.split(' ').filter(Boolean));
+  if (requestedTokens.length === 1 && storedTokens.has(requestedTokens[0])) return false;
+
+  return true;
+}
+
 function mapGoogleRefreshError(errorCode?: string): {
   errorCode: string;
   error: string;
@@ -371,7 +394,7 @@ Deno.serve(async (req) => {
 
     const { data: contact, error: contactError } = await supabase
       .from('contacts')
-      .select('id, email, full_name, first_name, last_name, account_id')
+      .select('id, email, full_name, first_name, last_name, account_id, status')
       .eq('organization_id', organizationId)
       .ilike('email', normalizedRecipientEmail)
       .maybeSingle();
@@ -398,6 +421,41 @@ Deno.serve(async (req) => {
         error: 'I can only send scheduling emails to contacts in this CRM. Add this person as a contact first, then retry.',
         traceId,
       }, 403);
+    }
+
+    const storedContactName = contact.full_name
+      || [contact.first_name, contact.last_name].filter(Boolean).join(' ')
+      || normalizedRecipientEmail;
+    if (namesConflict(recipientName, storedContactName)) {
+      await logEmailSend({
+        organizationId,
+        userId,
+        contactId: contact.id,
+        recipientEmail: normalizedRecipientEmail,
+        recipientName,
+        subject,
+        status: 'blocked',
+        errorMessage: 'Recipient name does not match CRM contact for this email',
+        traceId,
+        metadata: {
+          reason: 'contact_name_mismatch',
+          crmContactName: storedContactName,
+          requestedRecipientName: recipientName,
+        },
+      });
+      return jsonResponse({
+        success: false,
+        errorCode: 'CONTACT_NAME_MISMATCH',
+        error: `That email is attached to ${storedContactName} in the CRM, not ${recipientName}. Update the contact or change the recipient before sending.`,
+        crmContact: {
+          id: contact.id,
+          full_name: storedContactName,
+          email: contact.email,
+          status: contact.status || null,
+        },
+        requestedRecipientName: recipientName,
+        traceId,
+      }, 409);
     }
 
     if (dealId) {
@@ -542,7 +600,19 @@ Deno.serve(async (req) => {
           subject,
           plainBody: plainBody || null,
         });
-        return jsonResponse({ success: true, provider: 'gmail', messageId: result.messageId, auditId, traceId });
+        return jsonResponse({
+          success: true,
+          provider: 'gmail',
+          messageId: result.messageId,
+          auditId,
+          contact: {
+            id: contact.id,
+            full_name: storedContactName,
+            email: contact.email,
+            status: contact.status || null,
+          },
+          traceId,
+        });
       }
 
       // Gmail failed — fall through to Resend if available
@@ -583,7 +653,19 @@ Deno.serve(async (req) => {
           subject,
           plainBody: plainBody || null,
         });
-        return jsonResponse({ success: true, provider: 'resend', messageId: result.messageId, auditId, traceId });
+        return jsonResponse({
+          success: true,
+          provider: 'resend',
+          messageId: result.messageId,
+          auditId,
+          contact: {
+            id: contact.id,
+            full_name: storedContactName,
+            email: contact.email,
+            status: contact.status || null,
+          },
+          traceId,
+        });
       }
 
       await updateEmailSendAudit(auditId, {

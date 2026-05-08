@@ -229,6 +229,12 @@ function buildEmailSendFeedback(
       return {
         responseText: "I can only send email to CRM contacts. Add this person as a contact first, then send the draft again.",
       };
+    case 'CONTACT_NAME_MISMATCH': {
+      const crmName = data?.crmContact?.full_name || 'the existing CRM contact';
+      return {
+        responseText: `I didn't send the email because ${recipientEmail} is attached to ${crmName} in the CRM, not ${recipientName}. Update the contact or change the recipient, then send again.`,
+      };
+    }
     case 'EMAIL_RATE_LIMITED':
       return {
         responseText: "This workspace hit its daily email safety limit. Try again later or raise the sending cap.",
@@ -1824,7 +1830,7 @@ export const useChat = () => {
       const feedback = failed ? buildEmailSendFeedback(data, error, recipientName, draft.to_email) : null;
       const responseText = failed
         ? feedback!.responseText
-        : `Sent to ${recipientName} <${draft.to_email}>${data?.provider ? ` using ${data.provider}` : ''}. I logged the email activity in CRM.`;
+        : `Sent to ${data?.contact?.full_name || recipientName} <${draft.to_email}>${data?.provider ? ` using ${data.provider}` : ''}. I logged the email activity in CRM.`;
 
       setMessages(prev => [...prev, {
         id: aiMessageId,
