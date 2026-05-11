@@ -48,6 +48,9 @@ Delivery surfaces that normalize input/output for the gateway. The web UI is the
 ### Entity Context
 Cross-message pronoun resolution system. When the user says "bump probability on **that** to 60%", the system resolves "that" to the deal discussed in the previous turn via the `entityContext` system stored per chat session.
 
+### Context Gateway
+Read-only CRM retrieval is normalized through `get_context_resource`, which maps typed resource requests to scoped account, deal, contact, pipeline, and message context skills. See [docs/CONTEXT_GATEWAY.md](docs/CONTEXT_GATEWAY.md) for cache, invalidation, and future source-versioning notes.
+
 ## Directory Structure
 
 ```

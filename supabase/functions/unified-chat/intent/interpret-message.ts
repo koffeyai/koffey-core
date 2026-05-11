@@ -53,8 +53,14 @@ export interface IntentFilters {
 
 export interface IntentContext {
   entityContext?: {
-    primaryEntity?: { type?: string; id?: string; name?: string };
-    referencedEntities?: Record<string, Array<{ id: string; name: string }>>;
+    primaryEntity?: { type?: string; id?: string; name?: string } | null;
+    referencedEntities?: Record<string, Array<{
+      id: string;
+      name: string;
+      selectionGroup?: string;
+      selectionIndex?: number;
+      referencedAt?: string | number;
+    }>>;
   } | null;
   activeContext?: {
     lastEntityType?: string;

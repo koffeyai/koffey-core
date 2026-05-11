@@ -28,6 +28,8 @@ test('synthesis prompt packages CRM tool results as regular text context', () =>
   assert.match(message, /Tool 1: search_crm/);
   assert.match(message, /QA Calendar Two-Way Sync Deal/);
   assert.match(message, /prospecting/);
+  assert.match(message, /Do not include internal UUIDs/);
+  assert.match(message, /Prefer business-facing names/);
   assert.equal(message.includes('"role":"tool"'), false);
 });
 

@@ -48,7 +48,8 @@ function buildAnalysisProfile(dealData: any, zoomLevel?: string) {
   const description = typeof dealData?.description === 'string' ? dealData.description : '';
   const timeline = typeof dealData?.timeline === 'string' ? dealData.timeline : '';
   const competitors = typeof dealData?.competitorInfo === 'string' ? dealData.competitorInfo : '';
-  const inputEstimate = estimateTokens(`${notes}\n${description}\n${timeline}\n${competitors}`);
+  const holisticContext = dealData?.holisticContext ? JSON.stringify(dealData.holisticContext) : '';
+  const inputEstimate = estimateTokens(`${notes}\n${description}\n${timeline}\n${competitors}\n${holisticContext}`);
 
   const closeDate = dealData?.closeDate ? new Date(dealData.closeDate).getTime() : NaN;
   const daysToClose = Number.isFinite(closeDate) ? Math.max(0, Math.ceil((closeDate - Date.now()) / (1000 * 60 * 60 * 24))) : 90;
@@ -60,9 +61,9 @@ function buildAnalysisProfile(dealData: any, zoomLevel?: string) {
   if (zoomLevel === 'strategic' && inputEstimate < 1200) depthMode = 'deep';
 
   const depthConfig = {
-    focused: { maxTokens: 1200, notesLimit: 1800, descriptionLimit: 1400, timelineLimit: 500, competitorLimit: 500 },
-    standard: { maxTokens: 1700, notesLimit: 2600, descriptionLimit: 1800, timelineLimit: 700, competitorLimit: 700 },
-    deep: { maxTokens: 2400, notesLimit: 3600, descriptionLimit: 2600, timelineLimit: 1000, competitorLimit: 1000 },
+    focused: { maxTokens: 900, notesLimit: 1000, descriptionLimit: 900, timelineLimit: 320, competitorLimit: 320, holisticLimit: 1600 },
+    standard: { maxTokens: 1200, notesLimit: 1500, descriptionLimit: 1200, timelineLimit: 450, competitorLimit: 450, holisticLimit: 2400 },
+    deep: { maxTokens: 1600, notesLimit: 2200, descriptionLimit: 1600, timelineLimit: 650, competitorLimit: 650, holisticLimit: 3200 },
   }[depthMode];
 
   return {
@@ -81,6 +82,149 @@ function quarterLabel(dateLike: unknown): string {
   const quarter = Math.floor(month / 3) + 1;
   const year = validDate.getFullYear();
   return `Q${quarter} ${year}`;
+}
+
+function asArray(value: unknown): any[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function text(value: unknown, fallback = ''): string {
+  const output = String(value ?? '').trim();
+  return output || fallback;
+}
+
+function dateLabel(value: unknown): string {
+  if (!value) return '';
+  const date = new Date(String(value));
+  if (!Number.isFinite(date.getTime())) return String(value);
+  return date.toISOString().slice(0, 10);
+}
+
+function formatRecentActivity(activity: any): string {
+  const when = dateLabel(activity?.activity_date || activity?.scheduled_at || activity?.created_at);
+  const title = text(activity?.title || activity?.subject || activity?.type, 'Activity');
+  const detail = truncateText(text(activity?.description), 220);
+  return `- ${[when, title].filter(Boolean).join(' - ')}${detail ? `: ${detail}` : ''}`;
+}
+
+function formatRecentEmail(email: any): string {
+  const when = dateLabel(email?.received_at);
+  const direction = text(email?.direction, 'email');
+  const subject = text(email?.subject, '(no subject)');
+  const from = text(email?.from_name || email?.from_email, 'unknown sender');
+  const to = asArray(email?.to_emails).join(', ');
+  const contact = text(email?.contact_name);
+  const snippet = truncateText(text(email?.snippet), 220);
+  return `- ${[when, direction].filter(Boolean).join(' ')}: ${subject} (${from}${to ? ` -> ${to}` : ''}${contact ? `; CRM contact ${contact}` : ''})${snippet ? ` | ${snippet}` : ''}`;
+}
+
+function formatEngagement(row: any): string {
+  const name = text(row?.contact_name || row?.contact_email, 'Contact');
+  const sent = Number(row?.total_emails_sent || 0);
+  const received = Number(row?.total_emails_received || 0);
+  const lastSent = dateLabel(row?.last_email_sent_at);
+  const lastReceived = dateLabel(row?.last_email_received_at);
+  const score = row?.engagement_score == null ? '' : `, score ${Math.round(Number(row.engagement_score))}`;
+  const response = row?.avg_response_hours == null ? '' : `, avg response ${Math.round(Number(row.avg_response_hours) * 10) / 10}h`;
+  return `- ${name}: ${sent} sent, ${received} received${lastSent ? `, last sent ${lastSent}` : ''}${lastReceived ? `, last received ${lastReceived}` : ''}${response}${score}`;
+}
+
+function formatContactMemory(row: any): string {
+  const name = text(row?.contact_name || row?.contact_email, 'Contact');
+  const signals = row?.relationship_signals || {};
+  const prefs = row?.communication_preferences || {};
+  const facts = asArray(row?.facts)
+    .map((fact: any) => text(fact?.fact || fact))
+    .filter(Boolean)
+    .slice(0, 5)
+    .join('; ');
+  const summary = truncateText(text(row?.summary), 260);
+  const sentiment = text(signals.sentiment);
+  const engagement = text(signals.engagement_level);
+  const tone = text(prefs.tone || prefs.channel);
+  return `- ${name}: ${[
+    summary,
+    sentiment ? `sentiment ${sentiment}` : '',
+    engagement ? `${engagement} engagement` : '',
+    tone ? `preference ${tone}` : '',
+    facts ? `facts: ${facts}` : '',
+  ].filter(Boolean).join(' | ')}`;
+}
+
+function buildHolisticContextSection(dealData: any, maxChars: number): string {
+  const context = dealData?.holisticContext;
+  if (!context || typeof context !== 'object') return '';
+
+  const sections: string[] = [];
+  const account = context.account || {};
+  if (account.name) {
+    sections.push(`Account context: ${[
+      text(account.name),
+      text(account.industry),
+      text(account.description),
+    ].filter(Boolean).join(' - ')}`);
+  }
+
+  const emailSummary = context.emailSummary || {};
+  if (emailSummary.recent_window_count) {
+    sections.push(`Email summary: ${emailSummary.recent_window_count} recent linked emails (${emailSummary.inbound_count || 0} inbound, ${emailSummary.outbound_count || 0} outbound). Last email ${dateLabel(emailSummary.last_email_at) || 'unknown'}.`);
+  }
+
+  const emails = asArray(context.recentEmails);
+  if (emails.length > 0) {
+    sections.push(`Recent email evidence:\n${emails.slice(0, 6).map(formatRecentEmail).join('\n')}`);
+  }
+
+  const engagement = asArray(context.emailEngagement);
+  if (engagement.length > 0) {
+    sections.push(`Email engagement by contact:\n${engagement.slice(0, 6).map(formatEngagement).join('\n')}`);
+  }
+
+  const activities = asArray(context.recentActivities);
+  if (activities.length > 0) {
+    sections.push(`Recent CRM activities:\n${activities.slice(0, 6).map(formatRecentActivity).join('\n')}`);
+  }
+
+  const notes = asArray(context.dealNotes)
+    .map((note: any) => {
+      const when = dateLabel(note?.created_at);
+      const body = truncateText(text(note?.content), 240);
+      return body ? `- ${when ? `${when}: ` : ''}${body}` : '';
+    })
+    .filter(Boolean);
+  if (notes.length > 0) {
+    sections.push(`Recent deal notes:\n${notes.slice(0, 3).join('\n')}`);
+  }
+
+  const memories = asArray(context.contactMemory);
+  if (memories.length > 0) {
+    sections.push(`Contact memory and relationship signals:\n${memories.slice(0, 4).map(formatContactMemory).join('\n')}`);
+  }
+
+  const tasks = asArray(context.openTasks)
+    .map((task: any) => `- ${text(task?.title, 'Task')}${task?.due_date ? ` due ${dateLabel(task.due_date)}` : ''}${task?.priority ? ` (${task.priority})` : ''}`)
+    .slice(0, 5);
+  if (tasks.length > 0) {
+    sections.push(`Open tasks:\n${tasks.join('\n')}`);
+  }
+
+  if (sections.length === 0) return '';
+
+  return `\n\nHOLISTIC CRM EVIDENCE FOR SCOUTPAD:\n${truncateText(sections.join('\n\n'), maxChars)}`;
+}
+
+function dealCoachingAiCallLimits() {
+  return {
+    maxAttempts: Math.max(1, Number(Deno.env.get('DEAL_COACHING_AI_MAX_ATTEMPTS') || '1')),
+    providerLimit: Math.max(1, Number(Deno.env.get('DEAL_COACHING_AI_PROVIDER_LIMIT') || '3')),
+    providerTimeoutMs: Math.max(5000, Number(Deno.env.get('DEAL_COACHING_PROVIDER_TIMEOUT_MS') || '22000')),
+  };
+}
+
+function dealCoachingTier(depthMode: 'focused' | 'standard' | 'deep') {
+  const configured = String(Deno.env.get('DEAL_COACHING_AI_TIER') || '').toLowerCase();
+  if (configured === 'lite' || configured === 'standard' || configured === 'pro') return configured;
+  return depthMode === 'deep' ? 'standard' : 'lite';
 }
 
 function stripCodeFences(content: string): string {
@@ -126,6 +270,163 @@ function isValidCoachingShape(result: any): boolean {
     result.coaching &&
     typeof result.dealScore.currentProbability !== 'undefined'
   );
+}
+
+const SCOUTPAD_RESULT_KEYS = [
+  'stakeholders',
+  'champion',
+  'opportunity',
+  'userAgreements',
+  'timeline',
+  'problem',
+  'approvalChain',
+  'decisionCriteria',
+];
+
+const SCOUTPAD_RESULT_ALIASES: Record<string, string[]> = {
+  stakeholders: ['stakeholders', 'stakeholder', 's'],
+  champion: ['champion', 'c'],
+  opportunity: ['opportunity', 'opportunityFit', 'opportunity_fit', 'o'],
+  userAgreements: ['userAgreements', 'user_agreements', 'userAgreement', 'user_agreement', 'agreements', 'u'],
+  timeline: ['timeline', 't'],
+  problem: ['problem', 'pain', 'problemPain', 'problem_pain', 'p'],
+  approvalChain: ['approvalChain', 'approval_chain', 'approvals', 'approval', 'a'],
+  decisionCriteria: ['decisionCriteria', 'decision_criteria', 'criteria', 'd'],
+};
+
+function clampPercent(value: unknown, fallback = 50): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(100, Math.max(0, Math.round(numeric)));
+}
+
+function normalizeRiskLevel(value: unknown): 'low' | 'medium' | 'high' | 'critical' {
+  const v = String(value || '').toLowerCase();
+  if (v === 'low' || v === 'medium' || v === 'high' || v === 'critical') return v;
+  return 'medium';
+}
+
+function normalizeTrendDirection(value: unknown): 'improving' | 'declining' | 'stable' {
+  const v = String(value || '').toLowerCase();
+  if (v === 'improving' || v === 'declining' || v === 'stable') return v;
+  return 'stable';
+}
+
+function normalizeConfidence(value: unknown): 'low' | 'medium' | 'high' {
+  const v = String(value || '').toLowerCase();
+  if (v === 'low' || v === 'medium' || v === 'high') return v;
+  return 'medium';
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item ?? '').trim()).filter(Boolean);
+}
+
+function dimensionFromRaw(raw: any, fallbackImpact: string) {
+  if (typeof raw === 'number' || typeof raw === 'string') {
+    return {
+      score: Math.min(10, Math.max(1, Math.round(Number(raw) || 5))),
+      evidence: [],
+      gaps: [],
+      impact: fallbackImpact,
+    };
+  }
+
+  return {
+    score: Math.min(10, Math.max(1, Math.round(Number(raw?.score ?? raw?.s) || 5))),
+    evidence: stringArray(raw?.evidence ?? raw?.e),
+    gaps: stringArray(raw?.gaps ?? raw?.g),
+    impact: text(raw?.impact ?? raw?.i, fallbackImpact),
+  };
+}
+
+function aliasedValue(source: any, aliases: string[]): any {
+  if (!source || typeof source !== 'object') return undefined;
+  for (const alias of aliases) {
+    if (source[alias] !== undefined) return source[alias];
+    const upper = alias.toUpperCase();
+    if (source[upper] !== undefined) return source[upper];
+  }
+  return undefined;
+}
+
+function coerceModelCoachingResult(input: any): any | null {
+  const payload = input?.result ?? input?.data ?? input;
+  if (!payload || typeof payload !== 'object') return null;
+
+  const dealScoreRaw = payload.dealScore ?? payload.deal_score ?? payload;
+  const scoutpadRaw = payload.scoutpadAnalysis
+    ?? payload.scoutpad_analysis
+    ?? payload.scoutpad
+    ?? payload.scoutpadScores
+    ?? payload.scoutpad_scores
+    ?? payload.scores
+    ?? {};
+  const coachingRaw = payload.coaching ?? {};
+  const forecastRaw = payload.quarterlyForecast ?? payload.quarterly_forecast ?? {};
+  const qualityRaw = payload.qualityAnalytics ?? payload.quality_analytics ?? {};
+  const compactNext = text(payload.next || payload.nextStep || payload.next_step);
+  const compactGap = text(payload.gap || payload.topGap || payload.top_gap);
+  const compactReason = text(payload.reason || payload.why);
+
+  const scoutpadAnalysis = Object.fromEntries(
+    SCOUTPAD_RESULT_KEYS.map((key) => {
+      const aliases = SCOUTPAD_RESULT_ALIASES[key] || [key];
+      const rawDimension = aliasedValue(scoutpadRaw, aliases) ?? aliasedValue(payload, aliases);
+      return [
+        key,
+        dimensionFromRaw(
+          rawDimension,
+          `${key} requires stronger CRM evidence.`
+        ),
+      ];
+    })
+  );
+
+  const recommended = coachingRaw.recommendedNextSteps ?? coachingRaw.recommended_next_steps;
+  const current = coachingRaw.currentNextSteps ?? coachingRaw.current_next_steps;
+  const result = {
+    dealScore: {
+      currentProbability: clampPercent(dealScoreRaw.currentProbability ?? dealScoreRaw.current_probability ?? dealScoreRaw.probability, 50),
+      confidenceLevel: normalizeConfidence(dealScoreRaw.confidenceLevel ?? dealScoreRaw.confidence_level ?? dealScoreRaw.confidence),
+      trendDirection: normalizeTrendDirection(dealScoreRaw.trendDirection ?? dealScoreRaw.trend_direction ?? dealScoreRaw.trend),
+      riskLevel: normalizeRiskLevel(dealScoreRaw.riskLevel ?? dealScoreRaw.risk_level ?? dealScoreRaw.risk),
+    },
+    scoutpadAnalysis,
+    coaching: {
+      currentNextSteps: stringArray(current),
+      recommendedNextSteps: Array.isArray(recommended)
+        ? recommended
+        : [{
+            action: compactNext || 'Validate stakeholder map and next decision milestone.',
+            priority: 'high',
+            timeframe: 'this_week',
+            probabilityImpact: '+5%',
+            reasoning: compactReason || compactGap || 'Model provided a compact recommendation without detailed reasoning.',
+          }],
+      risks: Array.isArray(coachingRaw.risks)
+        ? coachingRaw.risks
+        : compactGap
+          ? [{
+              risk: compactGap,
+              probability: ['high', 'critical'].includes(normalizeRiskLevel(dealScoreRaw.risk)) ? 'high' : 'medium',
+              mitigation: compactNext || 'Clarify this gap with the buyer this week.',
+            }]
+          : [],
+      opportunities: Array.isArray(coachingRaw.opportunities) ? coachingRaw.opportunities : [],
+    },
+    quarterlyForecast: {
+      closeThisQuarter: clampPercent(forecastRaw.closeThisQuarter ?? forecastRaw.close_this_quarter ?? dealScoreRaw.currentProbability ?? dealScoreRaw.current_probability ?? dealScoreRaw.probability, 50),
+      atRisk: Boolean(forecastRaw.atRisk ?? forecastRaw.at_risk ?? ['high', 'critical'].includes(normalizeRiskLevel(dealScoreRaw.riskLevel ?? dealScoreRaw.risk_level ?? dealScoreRaw.risk))),
+      keyMilestones: stringArray(forecastRaw.keyMilestones ?? forecastRaw.key_milestones),
+      coaching: text(forecastRaw.coaching, compactNext || 'Use SCOUTPAD gaps to tighten the deal this week.'),
+    },
+    qualityAnalytics: qualityRaw,
+    proactiveActions: Array.isArray(payload.proactiveActions) ? payload.proactiveActions : undefined,
+  };
+
+  return isValidCoachingShape(result) ? result : null;
 }
 
 function mapProviderFailure(error: any): ClientSafeError {
@@ -178,53 +479,6 @@ function mapProviderFailure(error: any): ClientSafeError {
   );
 }
 
-async function repairModelJson(rawContent: string): Promise<any | null> {
-  if (!rawContent || !rawContent.trim()) return null;
-  const repairPrompt = `
-You are a strict JSON repair assistant.
-Convert the following model output into VALID JSON ONLY.
-
-Rules:
-- Return one JSON object and nothing else.
-- Keep meaning faithful to source text.
-- Required top-level keys: dealScore, scoutpadAnalysis, coaching.
-- dealScore must include currentProbability, confidenceLevel, trendDirection, riskLevel.
-
-Source output:
-${rawContent.slice(0, 12000)}
-`.trim();
-
-  try {
-    const repairMessages = [
-      { role: 'system', content: 'Return valid JSON only. No markdown.' },
-      { role: 'user', content: repairPrompt },
-    ];
-    let repaired;
-    try {
-      repaired = await callWithFallback({
-        messages: repairMessages,
-        tier: 'standard',
-        temperature: 0,
-        maxTokens: 1800,
-        jsonMode: true,
-      });
-    } catch (error: any) {
-      // Some providers reject response_format/json mode with HTTP 400.
-      if (Number(error?.statusCode || 0) !== 400) throw error;
-      repaired = await callWithFallback({
-        messages: repairMessages,
-        tier: 'standard',
-        temperature: 0,
-        maxTokens: 1800,
-        jsonMode: false,
-      });
-    }
-    return tryParseJson(repaired.content || '');
-  } catch {
-    return null;
-  }
-}
-
 const DEAL_COACHING_SYSTEM_PROMPT = `
 You are Koffey, an AI RevOps coach with 20+ years of enterprise sales experience. You analyze deals using the SCOUTPAD framework and provide proactive coaching to help salespeople close deals this quarter.
 
@@ -235,6 +489,8 @@ You are analyzing ONE DEAL in isolation. Your analysis must:
 2. NEVER reference other deals, even if you "remember" them from training
 3. NEVER infer industry benchmarks unless explicitly requested
 4. NEVER say "compared to typical deals" - analyze THIS deal on its merits
+5. Use all supplied CRM evidence holistically: deal fields, stakeholder map, activities, deal notes, email snippets, email engagement stats, and contact memory
+6. Do not treat missing evidence as positive evidence. If email or memory signals conflict with deal-stage optimism, call out the risk with the specific evidence.
 
 When Account History is provided (Strategic Mode):
 - You may reference ONLY the deals listed in the ACCOUNT RELATIONSHIP HISTORY section
@@ -269,235 +525,28 @@ When Account History is NOT provided (Tactical Mode):
 - 2-3 contacts across different roles = adequate threading.
 - 4+ contacts across buyer roles, technical, and executive = strong multi-threading.
 
-### QUALITY ANALYTICS RUBRIC (MANDATORY)
-- Do NOT score based on checkbox existence alone.
-- For each SCOUTPAD dimension, evaluate quality depth on 1-10 for:
-  1) completeness
-  2) specificity
-  3) evidenceStrength
-  4) actionability
-- Compute a dimension "qualityScore" and explain rationale + weaknesses.
-- Penalize vague language like "engaged", "interested", or "timeline discussed" unless supported by concrete evidence.
-- Timeline quality must include concrete milestone dates, owner, and sequencing confidence.
-- Stakeholder quality must include role coverage quality (economic buyer, technical buyer, user, procurement, legal/executive as applicable).
-- Opportunity quality must include quantified business value, validation source, and urgency anchor.
-- Problem quality must include impact quantification and consequence of inaction.
-
-Your analysis MUST return valid JSON in this exact structure:
-
+Return a compact JSON object under 700 characters. Use this exact shape:
 {
-  "dealScore": {
-    "currentProbability": 65,
-    "confidenceLevel": "medium",
-    "trendDirection": "improving|declining|stable",
-    "riskLevel": "low|medium|high|critical"
+  "probability": 0-100,
+  "confidence": "low|medium|high",
+  "trend": "improving|declining|stable",
+  "risk": "low|medium|high|critical",
+  "scores": {
+    "S": 1-10,
+    "C": 1-10,
+    "O": 1-10,
+    "U": 1-10,
+    "T": 1-10,
+    "P": 1-10,
+    "A": 1-10,
+    "D": 1-10
   },
-  "scoutpadAnalysis": {
-    "stakeholders": {
-      "score": 7,
-      "evidence": ["VP of Engineering engaged", "CFO not yet involved"],
-      "gaps": ["Missing economic buyer", "No procurement contact"],
-      "impact": "High - missing key decision makers reduces probability by 15-20%"
-    },
-    "champion": {
-      "score": 8,
-      "evidence": ["Director of IT is actively selling internally", "Enabled meetings with VP Engineering and CFO"],
-      "gaps": ["Champion doesn't control budget"],
-      "impact": "Medium - strong champion but limited budget authority"
-    },
-    "opportunity": {
-      "score": 6,
-      "evidence": ["$2M annual savings identified"],
-      "gaps": ["ROI timeline not validated by finance"],
-      "impact": "Medium - need CFO validation to increase probability 10%"
-    },
-    "userAgreements": {
-      "score": 5,
-      "evidence": ["Verbal agreement on price"],
-      "gaps": ["No written proposal accepted", "Terms not negotiated"],
-      "impact": "High - formal agreement needed to move from 65% to 80%"
-    },
-    "timeline": {
-      "score": 4,
-      "evidence": ["End of quarter urgency mentioned"],
-      "gaps": ["No specific implementation dates", "Budget cycle unclear"],
-      "impact": "Critical - vague timeline suggests 40% probability drop"
-    },
-    "problem": {
-      "score": 9,
-      "evidence": ["System downtime costing $50k/month"],
-      "gaps": [],
-      "impact": "Low - well-defined pain increases urgency"
-    },
-    "approvalChain": {
-      "score": 3,
-      "evidence": ["Know about IT Director approval needed"],
-      "gaps": ["CIO, CFO, and CEO approval process unknown"],
-      "impact": "Critical - approval uncertainty could delay 2+ quarters"
-    },
-    "decisionCriteria": {
-      "score": 6,
-      "evidence": ["Security, scalability, and cost are priorities"],
-      "gaps": ["Competitive evaluation process unclear"],
-      "impact": "Medium - need to understand how they're comparing vendors"
-    }
-  },
-  "coaching": {
-    "currentNextSteps": [
-      "Send follow-up email to IT Director",
-      "Schedule demo for next week"
-    ],
-    "recommendedNextSteps": [
-      {
-        "action": "Schedule CFO intro meeting through IT Director",
-        "priority": "critical",
-        "timeframe": "this_week",
-        "probabilityImpact": "+15%",
-        "reasoning": "Economic buyer engagement critical for Q4 close"
-      },
-      {
-        "action": "Create mutual close plan with specific dates",
-        "priority": "high", 
-        "timeframe": "this_week",
-        "probabilityImpact": "+12%",
-        "reasoning": "Timeline clarity prevents deal slippage"
-      },
-      {
-        "action": "Map complete approval process with champion",
-        "priority": "high",
-        "timeframe": "next_week", 
-        "probabilityImpact": "+18%",
-        "reasoning": "Approval chain clarity essential for forecasting"
-      },
-      {
-        "action": "Get written proposal acceptance from current stakeholders",
-        "priority": "medium",
-        "timeframe": "next_week",
-        "probabilityImpact": "+8%",
-        "reasoning": "Formal agreement builds momentum"
-      }
-    ],
-    "risks": [
-      {
-        "risk": "Deal could slip to Q1 without CFO engagement",
-        "probability": "high",
-        "mitigation": "Leverage champion to arrange CFO intro within 5 days"
-      },
-      {
-        "risk": "Competitor may have inside track",
-        "probability": "medium", 
-        "mitigation": "Validate competitive landscape and differentiation"
-      }
-    ],
-    "opportunities": [
-      {
-        "opportunity": "Expand deal size with additional modules",
-        "probability": "medium",
-        "action": "Present infrastructure add-ons to reduce total cost"
-      }
-    ]
-  },
-  "quarterlyForecast": {
-    "closeThisQuarter": 65,
-    "atRisk": true,
-    "keyMilestones": [
-      "CFO meeting by [date]",
-      "Proposal acceptance by [date]", 
-      "Legal review start by [date]"
-    ],
-    "coaching": "This deal needs immediate attention on stakeholder expansion to hit Q4 numbers. Focus on economic buyer and approval process this week."
-  },
-  "qualityAnalytics": {
-    "overallScore": 7,
-    "confidence": "medium",
-    "rubric": {
-      "completeness": 7,
-      "specificity": 6,
-      "evidenceStrength": 7,
-      "actionability": 8,
-      "stakeholderCoverage": 5
-    },
-    "dimensions": {
-      "stakeholders": {
-        "qualityScore": 6,
-        "completeness": 5,
-        "specificity": 6,
-        "evidenceStrength": 7,
-        "actionability": 6,
-        "rationale": "Role coverage exists but is incomplete for close certainty.",
-        "weaknesses": ["Missing economic buyer confirmation"]
-      },
-      "champion": {
-        "qualityScore": 7,
-        "completeness": 7,
-        "specificity": 7,
-        "evidenceStrength": 6,
-        "actionability": 8,
-        "rationale": "Champion exists with partial influence and good motion.",
-        "weaknesses": ["Budget authority unclear"]
-      },
-      "opportunity": {
-        "qualityScore": 6,
-        "completeness": 6,
-        "specificity": 6,
-        "evidenceStrength": 7,
-        "actionability": 6,
-        "rationale": "Value proposition present but not finance-validated end-to-end.",
-        "weaknesses": ["ROI validation missing"]
-      },
-      "userAgreements": {
-        "qualityScore": 5,
-        "completeness": 4,
-        "specificity": 6,
-        "evidenceStrength": 5,
-        "actionability": 7,
-        "rationale": "Verbal alignment exceeds formal commitment.",
-        "weaknesses": ["No written acceptance"]
-      },
-      "timeline": {
-        "qualityScore": 4,
-        "completeness": 3,
-        "specificity": 4,
-        "evidenceStrength": 4,
-        "actionability": 6,
-        "rationale": "Timeline urgency exists but milestone certainty is weak.",
-        "weaknesses": ["Missing dated milestones", "Procurement sequencing unclear"]
-      },
-      "problem": {
-        "qualityScore": 8,
-        "completeness": 8,
-        "specificity": 8,
-        "evidenceStrength": 8,
-        "actionability": 7,
-        "rationale": "Pain is clear, quantified, and business-relevant.",
-        "weaknesses": []
-      },
-      "approvalChain": {
-        "qualityScore": 4,
-        "completeness": 3,
-        "specificity": 4,
-        "evidenceStrength": 5,
-        "actionability": 6,
-        "rationale": "Partial approval map with major uncertainty remaining.",
-        "weaknesses": ["Legal/procurement steps undefined"]
-      },
-      "decisionCriteria": {
-        "qualityScore": 6,
-        "completeness": 6,
-        "specificity": 6,
-        "evidenceStrength": 6,
-        "actionability": 7,
-        "rationale": "Known criteria are usable but not fully weighted/verified.",
-        "weaknesses": ["No weighted criteria scorecard"]
-      }
-    },
-    "highRiskFindings": [
-      "Stakeholder coverage quality below threshold",
-      "Timeline confidence below threshold"
-    ],
-    "summary": "This deal has useful signals, but quality depth is uneven and creates forecast risk."
-  }
+  "next": "max 12 words",
+  "gap": "max 12 words",
+  "reason": "max 12 words"
 }
+
+Quality analytics will be synthesized deterministically after your response from the SCOUTPAD evidence depth. Do not include qualityAnalytics unless you can keep the full response concise.
 
 CRITICAL INSTRUCTIONS:
 1. Always analyze using SCOUTPAD framework with 1-10 scoring
@@ -507,7 +556,7 @@ CRITICAL INSTRUCTIONS:
 5. Flag critical risks that could cause deal slippage
 6. Only reference information actually provided in the deal data
 7. Return ONLY valid JSON - no additional text or formatting
-8. Quality analytics is mandatory and must reflect depth, not checkbox presence
+8. Keep the response compact; quality analytics is added after model output from SCOUTPAD evidence depth
 `;
 
 const handler = async (req: Request): Promise<Response> => {
@@ -601,7 +650,7 @@ try {
           success: false,
           error: {
             code: error.code,
-            message: 'Request could not be processed',
+            message: error.message,
             retryable: error.retryable,
           },
           timestamp: Date.now(),
@@ -728,11 +777,13 @@ DEAL INFORMATION:
 - Current Stage: ${dealData.stage || 'Unknown'}
 - Current Probability: ${dealData.probability || 'Not set'}%
 - Stakeholders: ${stakeholderContext}
+- Account: ${dealData.accountName || 'Not specified'}
 - Timeline: ${truncateText(dealData.timeline || 'No timeline information', analysisProfile.limits.timelineLimit)}
 - Last Activity: ${dealData.lastActivity || 'No recent activity recorded'}
 - Competitor Information: ${truncateText(dealData.competitorInfo || 'No competitor information', analysisProfile.limits.competitorLimit)}
 - Additional Notes: ${truncateText(dealData.notes || dealData.description || 'No additional notes', analysisProfile.limits.notesLimit)}
 ${stakeholderRankingPrompt}
+${buildHolisticContextSection(dealData, analysisProfile.limits.holisticLimit)}
 ${accountHistorySection}
 
 Quarter Context: ${quarterLabel(dealData.closeDate)} - ${Math.ceil((new Date(dealData.closeDate || Date.now()).getTime() - Date.now()) / (1000 * 60 * 60 * 24))} days remaining
@@ -745,24 +796,34 @@ Provide comprehensive SCOUTPAD analysis with specific coaching recommendations f
   ];
 
   let llm;
+  let responseMaxTokens = analysisProfile.maxTokens;
   try {
+    const aiCallLimits = dealCoachingAiCallLimits();
+    const aiTier = dealCoachingTier(analysisProfile.depthMode);
+    responseMaxTokens = aiTier === 'lite'
+      ? Math.min(analysisProfile.maxTokens, 240)
+      : aiTier === 'standard'
+        ? Math.min(analysisProfile.maxTokens, 400)
+        : Math.min(analysisProfile.maxTokens, 700);
     try {
       llm = await callWithFallback({
         messages,
-        tier: analysisProfile.depthMode === 'deep' ? 'pro' : analysisProfile.depthMode === 'focused' ? 'lite' : 'standard',
+        tier: aiTier,
         temperature: AI_CONFIG.defaultTemperature,
-        maxTokens: analysisProfile.maxTokens,
+        maxTokens: responseMaxTokens,
         jsonMode: true,
+        ...aiCallLimits,
       });
     } catch (error: any) {
       // Some providers reject response_format/json mode with HTTP 400.
       if (Number(error?.statusCode || 0) !== 400) throw error;
       llm = await callWithFallback({
         messages,
-        tier: analysisProfile.depthMode === 'deep' ? 'pro' : analysisProfile.depthMode === 'focused' ? 'lite' : 'standard',
+        tier: aiTier,
         temperature: AI_CONFIG.defaultTemperature,
-        maxTokens: analysisProfile.maxTokens,
+        maxTokens: responseMaxTokens,
         jsonMode: false,
+        ...aiCallLimits,
       });
     }
   } catch (error: any) {
@@ -771,19 +832,15 @@ Provide comprehensive SCOUTPAD analysis with specific coaching recommendations f
 
   const content = llm.content || '';
 
-  let parsedInitial = tryParseJson(content);
-  let repairedJson = false;
-  let result = parsedInitial;
-  if (!isValidCoachingShape(result)) {
-    result = await repairModelJson(content);
-    repairedJson = !!result;
-  }
+  const parsedInitial = tryParseJson(content);
+  const repairedJson = false;
+  const result = coerceModelCoachingResult(parsedInitial) || parsedInitial;
 
   // Hard fail when structure is invalid — do not fabricate coaching.
   if (!isValidCoachingShape(result)) {
     throw new ClientSafeError(
       'INVALID_MODEL_OUTPUT',
-      'Model returned an invalid coaching structure. No analysis was saved. Please retry.',
+      'AI provider returned an unusable response. No analysis was saved. Please retry.',
       502,
       true
     );
@@ -797,8 +854,8 @@ Provide comprehensive SCOUTPAD analysis with specific coaching recommendations f
     depthMode: analysisProfile.depthMode,
     tokenBudget: {
       estimatedInputTokens: analysisProfile.inputEstimate,
-      maxOutputTokens: analysisProfile.maxTokens,
-      estimatedTotalTokens: analysisProfile.inputEstimate + analysisProfile.maxTokens,
+      maxOutputTokens: responseMaxTokens,
+      estimatedTotalTokens: analysisProfile.inputEstimate + responseMaxTokens,
     },
     daysToClose: analysisProfile.daysToClose,
     provider: llm.provider,

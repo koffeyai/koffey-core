@@ -13,6 +13,8 @@ import { DealData } from '@/services/dealCoachingService';
 
 // Convert store CoachingDeal to DealData format for SimplifiedCoachingPanel
 const convertToDealData = (deal: any): DealData => ({
+  id: deal.id,
+  organizationId: deal.organization_id || deal.organizationId,
   dealSize: deal.amount || 0,
   closeDate: deal.expected_close_date || deal.close_date || deal.closeDate || '',
   stage: deal.stage || 'prospecting',
@@ -24,6 +26,7 @@ const convertToDealData = (deal: any): DealData => ({
   timeline: deal.timeline || undefined,
   name: deal.name || deal.dealName || undefined,
   description: deal.description || undefined,
+  accountName: deal.account_name || deal.accounts?.name || undefined,
 });
 
 export const GlobalDialogs: React.FC = () => {

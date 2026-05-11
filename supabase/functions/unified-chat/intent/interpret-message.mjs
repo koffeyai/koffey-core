@@ -71,6 +71,9 @@ const ENTITY_EXTRACTION_PATTERNS = [
 ];
 const ENTITY_LOOKUP_EXTRACTION_PATTERNS = [
   /^(?:please\s+)?(?:can you\s+)?(?:tell me about|pull up|what'?s\s+the\s+status\s+of|what\s+is\s+the\s+status\s+of|status of|where is|who is)\s+(.+)$/i,
+  /^(?:please\s+)?(?:can you\s+)?(?:give me|provide|pull|show|get)\s+(?:the\s+)?(?:deal|deals|opportunity|opportunities|contact|contacts|account|accounts|company|companies)\s+(?:context|summary|overview|brief|details?)\s+(?:for|on|about)\s+(.+)$/i,
+  /^(?:please\s+)?(?:can you\s+)?(?:brief me on|summari[sz]e|give me an overview of)\s+(?:the\s+)?(?:deal|deals|opportunity|opportunities|contact|contacts|account|accounts|company|companies)?\s*(.+)$/i,
+  /^(?:deal|deals|opportunity|opportunities|contact|contacts|account|accounts|company|companies)\s+(?:context|summary|overview|brief|details?)\s+(?:for|on|about)\s+(.+)$/i,
   /^(?:please\s+)?(?:can you\s+)?(?:how'?s it going with|hows it going with|how is it going with)\s+(.+)$/i,
   /^(?:please\s+)?(?:can you\s+)?(?:any news on|what'?s the story with|whats the story with)\s+(.+)$/i,
   /^(?:please\s+)?(?:can you\s+)?(?:what\s+should\s+i\s+do\s+next\s+(?:with|for|on)|what'?s\s+the\s+next\s+(?:step|move|action)\s+(?:for|with|on)|how\s+should\s+i\s+follow\s+up\s+(?:with|on)|recommend(?:ed)?\s+next\s+(?:step|move|action)\s+(?:for|with|on))\s+(.+?)(?:\s+based\s+on\b.*)?$/i,
@@ -281,6 +284,66 @@ function resolveSingleActiveEntity(activeContext) {
       ? normalizeEntityHint(activeContext.lastEntityNames[0], { entityType })
       : null,
   };
+}
+
+function parseOptionSelectionNumber(message) {
+  const lower = String(message || '').toLowerCase().trim();
+  if (!lower) return null;
+
+  const direct = lower.match(/^(?:#|option\s+|number\s+)?([1-9]\d?)\.?$/);
+  if (direct) return Number(direct[1]);
+
+  const ordinalMap = new Map([
+    ['first', 1],
+    ['1st', 1],
+    ['second', 2],
+    ['2nd', 2],
+    ['third', 3],
+    ['3rd', 3],
+    ['fourth', 4],
+    ['4th', 4],
+    ['fifth', 5],
+    ['5th', 5],
+  ]);
+  const ordinal = lower.match(/^(?:the\s+)?(first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th)(?:\s+one)?$/);
+  return ordinal ? ordinalMap.get(ordinal[1]) || null : null;
+}
+
+function resolveOptionSelectionEntity(entityContext, message) {
+  const selectionNumber = parseOptionSelectionNumber(message);
+  if (!selectionNumber || !entityContext?.referencedEntities) return null;
+
+  const groups = [];
+  for (const entityType of ['deal', 'account', 'contact']) {
+    const entities = getReferencedEntities(entityContext, entityType);
+    for (const entity of entities) {
+      const group = String(entity?.selectionGroup || '').trim();
+      const index = Number(entity?.selectionIndex || 0);
+      if (!group || !Number.isInteger(index) || index < 1) continue;
+      let existing = groups.find((candidate) => candidate.group === group);
+      if (!existing) {
+        existing = { group, entityType, entities: [], newestAt: 0 };
+        groups.push(existing);
+      }
+      const referencedAt = Date.parse(entity?.referencedAt || '') || 0;
+      existing.newestAt = Math.max(existing.newestAt, referencedAt);
+      existing.entities.push({ entity, index });
+    }
+  }
+
+  groups.sort((a, b) => b.newestAt - a.newestAt);
+  for (const group of groups) {
+    const selected = group.entities.find((entry) => entry.index === selectionNumber)?.entity;
+    if (!selected?.id) continue;
+    return {
+      entityType: group.entityType,
+      entityId: String(selected.id),
+      entityHintRaw: selected.name || null,
+      entityHint: normalizeEntityHint(selected.name || '', { entityType: group.entityType }),
+    };
+  }
+
+  return null;
 }
 
 function resolveContextEntity(entityContext, activeContext) {
@@ -526,7 +589,8 @@ export function interpretMessageIntentHeuristic(message, context = {}, overrides
   const isCompound = isCompoundRequest(normalizedMessage);
   const isDataOrAction = isDataOrActionRequest(normalizedMessage, historyText);
   const zoomLevel = determineZoomLevel(normalizedMessage);
-  const contextEntity = resolveContextEntity(context?.entityContext, context?.activeContext);
+  const selectionEntity = resolveOptionSelectionEntity(context?.entityContext, normalizedMessage);
+  const contextEntity = selectionEntity || resolveContextEntity(context?.entityContext, context?.activeContext);
   const mentionedEntityType = inferMentionedEntityType(normalizedMessage);
   const bareAccountCreate = detectBareAccountCreateCommand(normalizedMessage);
   const extractionEntityType = mentionedEntityType || contextEntity?.entityType || 'deal';
@@ -570,6 +634,20 @@ export function interpretMessageIntentHeuristic(message, context = {}, overrides
   contract.classificationSource = resolveClassificationSource({ modelUsed: false, contextUsed, textHintUsed });
 
   const smallTalk = SMALL_TALK_PATTERNS.some((pattern) => pattern.test(lower));
+  if (selectionEntity?.entityId) {
+    contract.intent = 'entity_lookup';
+    contract.executionPath = 'standard';
+    contract.forcePath = false;
+    contract.confidence = 0.9;
+    contract.entityType = selectionEntity.entityType;
+    contract.entityId = selectionEntity.entityId;
+    contract.entityHintRaw = selectionEntity.entityHintRaw;
+    contract.entityHint = selectionEntity.entityHint;
+    contract.classificationSource = 'context';
+    ensureDomain(contract.domains, 'context');
+    return contract;
+  }
+
   if (smallTalk && !isDataOrAction) {
     contract.intent = 'small_talk';
     contract.executionPath = 'none';
@@ -722,6 +800,10 @@ export async function interpretMessageIntent(message, context = {}, overrides = 
   const lower = String(normalizedMessage || '').toLowerCase().trim();
   if (!lower) {
     return createBaseContract();
+  }
+
+  if (resolveOptionSelectionEntity(context?.entityContext, normalizedMessage)?.entityId) {
+    return interpretMessageIntentHeuristic(normalizedMessage, context, overrides);
   }
 
   const historyText = String(context?.historyText || '').toLowerCase();

@@ -22,6 +22,7 @@ import { DealGradeBadge, calculateDealGrade } from './DealGradeBadge';
 import { ScoutpadBar } from './ScoutpadBar';
 import { toast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import { useOrganizationAccess } from '@/hooks/useOrganizationAccess';
 
 interface SimplifiedCoachingPanelProps {
   deal: DealData;
@@ -40,7 +41,70 @@ const SCOUTPAD_DIMENSIONS = [
   { key: 'decisionCriteria', letter: 'D', name: 'Decision Criteria' },
 ] as const;
 
+function rows(value: unknown): Array<Record<string, any>> {
+  return Array.isArray(value) ? value as Array<Record<string, any>> : [];
+}
+
+function asText(value: unknown): string | undefined {
+  const text = String(value ?? '').trim();
+  return text || undefined;
+}
+
+function asNumber(value: unknown): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function latestActivityLabel(context: Record<string, any>, fallback?: string): string | undefined {
+  const latest = rows(context.recent_activities)[0];
+  if (!latest) return fallback;
+  const when = latest.activity_date || latest.scheduled_at || latest.created_at;
+  const title = latest.title || latest.subject || latest.type || 'Activity';
+  return [when, title].filter(Boolean).join(': ');
+}
+
+function mergeHolisticDealContext(base: DealData, context: Record<string, any> | null): DealData {
+  if (!context) return base;
+
+  const dealRow = context.deal || {};
+  const account = context.account || {};
+  const noteText = rows(context.deal_notes)
+    .map((note) => asText(note.content))
+    .filter(Boolean)
+    .join('\n');
+
+  return {
+    ...base,
+    dealSize: asNumber(dealRow.amount) ?? base.dealSize,
+    closeDate: asText(dealRow.expected_close_date) || asText(dealRow.close_date) || base.closeDate,
+    stage: asText(dealRow.stage) || base.stage,
+    probability: asNumber(dealRow.probability) ?? base.probability,
+    name: asText(dealRow.name) || base.name,
+    description: asText(dealRow.description) || base.description,
+    accountName: asText(account.name) || base.accountName,
+    competitorInfo: asText(dealRow.competitor_name) || base.competitorInfo,
+    lastActivity: latestActivityLabel(context, base.lastActivity),
+    notes: [base.notes, noteText].filter(Boolean).join('\n\n') || undefined,
+    holisticContext: {
+      deal: dealRow,
+      account,
+      primaryContact: context.primary_contact || null,
+      stakeholders: rows(context.stakeholders),
+      recentActivities: rows(context.recent_activities),
+      openTasks: rows(context.open_tasks),
+      dealNotes: rows(context.deal_notes),
+      dealTerms: context.deal_terms || null,
+      recentEmails: rows(context.recent_email_messages),
+      emailSummary: context.email_summary || null,
+      emailEngagement: rows(context.email_engagement),
+      contactMemory: rows(context.contact_memory),
+      meta: context._meta || null,
+    },
+  };
+}
+
 export function SimplifiedCoachingPanel({ deal, dealId, onCoachingUpdate }: SimplifiedCoachingPanelProps) {
+  const { organizationId } = useOrganizationAccess();
   const [coaching, setCoaching] = useState<DealCoachingResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -113,20 +177,60 @@ export function SimplifiedCoachingPanel({ deal, dealId, onCoachingUpdate }: Simp
     }
   }, [dealId]);
 
+  const fetchHolisticDealContext = useCallback(async (): Promise<
+    { status: 'success'; data: Record<string, any> } |
+    { status: 'unavailable'; reason: 'missing-context' | 'query-error' | 'unexpected-error' }
+  > => {
+    const contextOrgId = deal.organizationId || organizationId;
+    if (!dealId || !contextOrgId) {
+      return { status: 'unavailable', reason: 'missing-context' };
+    }
+
+    try {
+      const { data, error } = await supabase.rpc('get_deal_context_for_llm', {
+        p_deal_id: dealId,
+        p_organization_id: contextOrgId,
+      });
+
+      if (error || !data) {
+        return { status: 'unavailable', reason: 'query-error' };
+      }
+
+      return { status: 'success', data: data as Record<string, any> };
+    } catch (err) {
+      console.error('Failed to fetch holistic deal context:', err);
+      return { status: 'unavailable', reason: 'unexpected-error' };
+    }
+  }, [deal.organizationId, dealId, organizationId]);
+
   const handleAnalyze = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     setStakeholderWarning(null);
 
     try {
+      const warnings: string[] = [];
+      const holisticContextResult = await fetchHolisticDealContext();
+
       // Enrich deal with actual stakeholder rankings from deal_contacts
       const stakeholderRankingsResult = await fetchStakeholderRankings();
-      const enrichedDeal: DealData = stakeholderRankingsResult.status === 'success'
-        ? { ...deal, stakeholderRankings: stakeholderRankingsResult.data }
+      const contextEnrichedDeal = holisticContextResult.status === 'success'
+        ? mergeHolisticDealContext(deal, holisticContextResult.data)
         : deal;
+      const enrichedDeal: DealData = stakeholderRankingsResult.status === 'success'
+        ? { ...contextEnrichedDeal, stakeholderRankings: stakeholderRankingsResult.data }
+        : contextEnrichedDeal;
+
+      if (holisticContextResult.status === 'unavailable' && holisticContextResult.reason !== 'missing-context') {
+        warnings.push('Could not load full CRM/email context, so this analysis used visible deal data only.');
+      }
 
       if (stakeholderRankingsResult.status === 'unavailable' && stakeholderRankingsResult.reason !== 'missing-deal-id') {
-        setStakeholderWarning('Could not load stakeholder map data, so this analysis used existing deal context only.');
+        warnings.push('Could not load stakeholder map data, so stakeholder-specific scoring may be less precise.');
+      }
+
+      if (warnings.length > 0) {
+        setStakeholderWarning(warnings.join(' '));
       }
 
       const result = await coachDeal(enrichedDeal, 'groq');
@@ -147,7 +251,7 @@ export function SimplifiedCoachingPanel({ deal, dealId, onCoachingUpdate }: Simp
     } finally {
       setIsLoading(false);
     }
-  }, [deal, dealId, fetchStakeholderRankings, onCoachingUpdate]);
+  }, [deal, fetchHolisticDealContext, fetchStakeholderRankings, onCoachingUpdate]);
 
   const getTrendIcon = (direction: string) => {
     switch (direction) {

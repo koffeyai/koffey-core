@@ -34,9 +34,11 @@ const STABLE_TOOL_SET = new Set([
   'get_pipeline_velocity',
   'draft_email',
   'get_deal_context',
+  'get_account_context',
   'get_contact_context',
   'get_entity_messages',
   'get_pipeline_context',
+  'get_context_resource',
   'check_availability',
   'send_scheduling_email',
   'schedule_meeting',
@@ -49,9 +51,11 @@ const READ_ONLY_RESPONSE_TOOLS = new Set([
   'get_sales_cycle_analytics',
   'get_pipeline_velocity',
   'get_deal_context',
+  'get_account_context',
   'get_contact_context',
   'get_entity_messages',
   'get_pipeline_context',
+  'get_context_resource',
 ]);
 
 const MUTATION_TOOLS = new Set([

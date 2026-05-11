@@ -37,6 +37,19 @@
         "requires_approval": "boolean — does this need user confirmation before executing?",
         "audit_log": "boolean — always true for CRM skills"
       }
+    },
+    "context_resources": {
+      "description": "Typed, read-only retrieval resources that map CRM context needs to scoped backend skills instead of ad hoc multi-query tool plans.",
+      "gateway_tool": "get_context_resource",
+      "examples": [
+        "crm://accounts/{account_id}/context",
+        "crm://deals/{deal_id}/context",
+        "crm://contacts/{contact_id}/context",
+        "crm://accounts/{account_id}/messages",
+        "analytics://pipeline?scope=org"
+      ],
+      "cache_policy": "Short-TTL, organization/user-scoped context_resource_cache. Mutations invalidate the organization's cached context resources.",
+      "security_model": "Resources resolve through the same authenticated unified-chat gateway and organization-scoped skills. Mutations remain typed tools with existing confirmation policy."
     }
   },
 

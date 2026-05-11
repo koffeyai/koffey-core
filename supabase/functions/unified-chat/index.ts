@@ -15,6 +15,7 @@ import { callWithFallback, hasAnyProvider } from '../_shared/ai-provider.ts';
 import { routeRequest } from '../_shared/complexity-router.ts';
 import { getRegistryToolSchemas, getSkillInstructions, getSkill } from './skills/registry.ts';
 import type { SkillDomain, ToolExecutionContext } from './skills/types.ts';
+import { invalidateContextResourceCacheForOrganization } from './skills/context/resource-gateway.ts';
 import { validateToolArgs } from './skills/arg-validator.ts';
 import { mapToolErrorToUserMessage } from './skills/error-mapping.ts';
 import { detectDocument } from './gateway/document-detection.ts';
@@ -3602,7 +3603,9 @@ const handler = async (req: Request): Promise<Response> => {
 
       if (mutationApplied) {
         await invalidateResponseCacheForOrganization(admin, organizationId).catch(() => { });
+        await invalidateContextResourceCacheForOrganization(admin, organizationId).catch(() => { });
         meta.responseCacheInvalidated = true;
+        meta.contextResourceCacheInvalidated = true;
       }
 
       const finalCitations = collectCitationsFromOperations(crmOperations);
@@ -3721,25 +3724,91 @@ const handler = async (req: Request): Promise<Response> => {
         primaryEntity: resolvedEntityContext?.primaryEntity || undefined,
       };
 
+      const normalizeContextEntityType = (type: string) =>
+        type === 'deal' ? 'deals' : type === 'contact' ? 'contacts' : type === 'account' ? 'accounts' : type + 's';
+
       // Helper to add an entity to the context
-      const addEntityToContext = (type: string, id: string, name: string) => {
+      const addEntityToContext = (
+        type: string,
+        id: string,
+        name: string,
+        options: { setPrimary?: boolean; extra?: Record<string, any> } = {}
+      ) => {
+        const { setPrimary = true, extra = {} } = options;
         const normalizedType = type === 'deal' ? 'deals' : type === 'contact' ? 'contacts' : type === 'account' ? 'accounts' : type + 's';
         if (!responseEntityContext.referencedEntities[normalizedType]) {
           responseEntityContext.referencedEntities[normalizedType] = [];
         }
         const existing = responseEntityContext.referencedEntities[normalizedType];
         if (!existing.some((e: any) => e.id === id)) {
-          existing.unshift({ id, name, type, referencedAt: new Date().toISOString() });
+          existing.unshift({ id, name, type, referencedAt: new Date().toISOString(), ...extra });
           if (existing.length > 5) existing.pop();
         }
         // Set as primary entity (last referenced wins)
-        responseEntityContext.primaryEntity = { type, id, name, referencedAt: new Date().toISOString() };
+        if (setPrimary) {
+          responseEntityContext.primaryEntity = { type, id, name, referencedAt: new Date().toISOString() };
+        }
+      };
+
+      const addSelectionOptionsToContext = (
+        type: 'deal' | 'account' | 'contact',
+        rows: any[],
+        label?: string
+      ) => {
+        const options = rows
+          .slice(0, 5)
+          .map((row: any) => ({
+            id: row?.id || row?.deal_id || row?.account_id || row?.contact_id,
+            name: row?.name || row?.full_name || row?.deal_name || row?.account_name || row?.title,
+          }))
+          .filter((row: any) => row.id && row.name);
+        if (options.length === 0) return;
+
+        const normalizedType = normalizeContextEntityType(type);
+        const existing = Array.isArray(responseEntityContext.referencedEntities[normalizedType])
+          ? responseEntityContext.referencedEntities[normalizedType]
+          : [];
+        const optionIds = new Set(options.map((row: any) => row.id));
+        const selectionGroup = `${type}:${Date.now()}:${String(label || 'options').slice(0, 48)}`;
+        const baseMs = Date.now();
+        const optionRefs = options.map((row: any, index: number) => ({
+          id: row.id,
+          name: row.name,
+          type,
+          referencedAt: new Date(baseMs + options.length - index).toISOString(),
+          selectionGroup,
+          selectionIndex: index + 1,
+          selectionLabel: label || undefined,
+        }));
+
+        responseEntityContext.referencedEntities[normalizedType] = [
+          ...optionRefs,
+          ...existing
+            .filter((entity: any) => !optionIds.has(entity?.id) && !entity?.selectionGroup)
+            .slice(0, Math.max(0, 5 - optionRefs.length)),
+        ];
+        responseEntityContext.primaryEntity = null;
       };
 
       // Extract entities from tool results and update context
       for (const op of crmOperations) {
         const result = op.result;
         if (!result) continue;
+
+        if (result.multiple_accounts && Array.isArray(result.accounts)) {
+          addSelectionOptionsToContext('account', result.accounts, result.label || result.account_name);
+          continue;
+        }
+
+        if (result.multiple_deals && (Array.isArray(result.deals) || Array.isArray(result.candidate_deals))) {
+          addSelectionOptionsToContext('deal', result.deals || result.candidate_deals, result.label || result.deal_name);
+          continue;
+        }
+
+        if (result.multiple_contacts && Array.isArray(result.contacts)) {
+          addSelectionOptionsToContext('contact', result.contacts, result.label || result.contact_name);
+          continue;
+        }
 
         // Handle search_crm results (array of results with entity_type)
         if (result.results && Array.isArray(result.results) && result.entity_type) {

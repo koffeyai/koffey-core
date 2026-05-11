@@ -3,7 +3,8 @@
  *
  * Fetch comprehensive, pre-joined deal context from the
  * get_deal_context_for_llm Postgres RPC. Returns deal info, account,
- * contacts, stakeholders, activities, tasks, notes, and contract terms
+ * contacts, stakeholders, activities, tasks, notes, contract terms,
+ * email snippets, engagement stats, and contact memory
  * in a single call — optimised for LLM synthesis.
  */
 
@@ -239,7 +240,7 @@ const getDealContext: SkillDefinition = {
     function: {
       name: 'get_deal_context',
       description:
-        'Fetch comprehensive context for a deal in a single call: deal info, account, contacts, stakeholders, activities, tasks, notes, and contract terms. Use this INSTEAD of multiple search_crm calls when you need a full picture of a deal. Prefer deal_id over deal_name when available from entity context or previous tool results.',
+        'Fetch comprehensive context for a deal in a single call: deal info, account, contacts, stakeholders, activities, tasks, notes, contract terms, recent email snippets, engagement stats, and contact memory. Use this INSTEAD of multiple search_crm calls when you need a full picture of a deal. Prefer deal_id over deal_name when available from entity context or previous tool results.',
       parameters: {
         type: 'object',
         properties: {
@@ -260,7 +261,7 @@ const getDealContext: SkillDefinition = {
   },
 
   instructions: `**For "tell me about [deal]", "what's happening with [deal]", "give me context on [deal]", "brief me on [deal]", "deal summary", "deal overview"** \u2192 Use get_deal_context
-- Returns complete deal context in a single call: deal info, account, contacts, stakeholders, activities, tasks, notes, and contract terms
+- Returns complete deal context in a single call: deal info, account, contacts, stakeholders, activities, tasks, notes, contract terms, recent email snippets, engagement stats, and contact memory
 - Use this INSTEAD of multiple search_crm calls when you need comprehensive deal information
 - Prefer deal_id over deal_name when available from context`,
 

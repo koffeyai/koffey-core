@@ -1700,7 +1700,7 @@ export const useChat = () => {
             queryAssist: data?.meta?.queryAssist || null,
             emailDraft: emailDraft || null,
           };
-          await supabase.functions.invoke('conversation-logger', {
+          void supabase.functions.invoke('conversation-logger', {
             body: {
               aiResponse: responseWithFollowUp,
               aiMessageId,
@@ -1708,10 +1708,18 @@ export const useChat = () => {
               userId: user.id,
               aiMetadata,
             }
+          }).then(({ error }) => {
+            if (error) {
+              console.warn('⚠️ Failed to persist AI response:', error);
+            } else {
+              console.log('💾 AI response persisted to database');
+            }
+          }).catch((logError) => {
+            console.warn('⚠️ Failed to persist AI response:', logError);
           });
-          console.log('💾 AI response persisted to database');
+          console.log('💾 AI response persistence queued');
         } catch (logError) {
-          console.warn('⚠️ Failed to persist AI response:', logError);
+          console.warn('⚠️ Failed to queue AI response persistence:', logError);
         }
       } else {
         console.log('💾 Skipping client persist (server already handled)');

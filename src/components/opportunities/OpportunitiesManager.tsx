@@ -15,11 +15,13 @@ import { DealNotesSection } from '@/components/deals/DealNotesSection';
 import { DealSummarySection } from '@/components/deals/DealSummarySection';
 import { DealContactsManager } from '@/components/deals/DealContactsManager';
 import { DealSourcesAndFilesSection } from '@/components/deals/DealSourcesAndFilesSection';
+import { SimplifiedCoachingPanel } from '@/components/deals/SimplifiedCoachingPanel';
 import { ClipboardList, FileText, LayoutDashboard, Archive, Building2, Plus, Sparkles } from 'lucide-react';
 import { useSourceDocuments } from '@/hooks/useSourceDocuments';
 import { useDealAttachments } from '@/hooks/useDealAttachments';
 import { useDialogStore } from '@/stores/dialogStore';
 import { supabase } from '@/integrations/supabase/client';
+import { DealCoachingResult, DealData } from '@/services/dealCoachingService';
 import { openAccountView } from '@/lib/appNavigation';
 import {
   PENDING_DEAL_DETAIL_KEY,
@@ -47,6 +49,8 @@ export default function OpportunitiesManager({
 }: OpportunitiesManagerProps) {
   const [selectedDeal, setSelectedDeal] = useState<Deal | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [isCoachingOpen, setIsCoachingOpen] = useState(false);
+  const [coachingDeal, setCoachingDeal] = useState<DealData | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
   
@@ -204,33 +208,47 @@ export default function OpportunitiesManager({
     }
   };
 
-  const handleAnalyzeWithAI = () => {
-    if (!selectedDeal?.id) {
+  const toCoachingDeal = (deal: Deal, overrides?: typeof formData): DealData => {
+    const amount = overrides?.amount ? Number(overrides.amount) : Number(deal.amount || 0);
+    const probability = overrides?.probability ? Number(overrides.probability) : Number(deal.probability || 0);
+    const accountName =
+      (deal as any)?.accounts?.name ||
+      (deal as any)?.account_name ||
+      (deal as any)?.account?.name ||
+      deal.account ||
+      '';
+
+    return {
+      id: deal.id,
+      organizationId: (deal as any)?.organization_id || (deal as any)?.organizationId,
+      name: overrides?.name || deal.name || deal.dealName || 'Untitled Deal',
+      dealSize: Number.isFinite(amount) ? amount : 0,
+      stage: overrides?.stage || deal.stage || 'prospecting',
+      probability: Number.isFinite(probability) ? probability : undefined,
+      closeDate: overrides?.close_date || deal.close_date || deal.closeDate || '',
+      description: overrides?.description || deal.description || undefined,
+      notes: overrides?.description || deal.description || deal.notes || undefined,
+      accountName: accountName || undefined,
+      stakeholders: deal.stakeholders || undefined,
+      lastActivity: deal.last_activity || undefined,
+      competitorInfo: deal.competitor_info || undefined,
+      timeline: deal.timeline || undefined,
+    };
+  };
+
+  const openScoutpadAnalysis = (deal: Deal, overrides?: typeof formData) => {
+    if (!deal?.id) {
       toast.error('Save this deal first, then run SCOUTPAD analysis.');
       return;
     }
 
-    const parsedAmount = formData.amount ? Number(formData.amount) : Number(selectedDeal.amount || 0);
-    const parsedProbability = formData.probability ? Number(formData.probability) : Number(selectedDeal.probability || 0);
-    const accountName =
-      (selectedDeal as any)?.accounts?.name ||
-      (selectedDeal as any)?.account_name ||
-      (selectedDeal as any)?.account?.name ||
-      '';
+    setCoachingDeal(toCoachingDeal(deal, overrides));
+    setIsDetailOpen(false);
+    setIsCoachingOpen(true);
+  };
 
-    const { openCoachingDialog } = useDialogStore.getState();
-    openCoachingDialog({
-      id: selectedDeal.id,
-      name: formData.name || selectedDeal.name || selectedDeal.dealName || 'Untitled Deal',
-      amount: Number.isFinite(parsedAmount) ? parsedAmount : undefined,
-      stage: formData.stage || selectedDeal.stage || undefined,
-      probability: Number.isFinite(parsedProbability) ? parsedProbability : undefined,
-      close_date: formData.close_date || selectedDeal.close_date || selectedDeal.closeDate || undefined,
-      description: formData.description || selectedDeal.description || undefined,
-      notes: formData.description || selectedDeal.description || undefined,
-      account_id: (selectedDeal as any)?.account_id || undefined,
-      account_name: accountName || undefined,
-    });
+  const handleAnalyzeWithAI = () => {
+    if (selectedDeal) openScoutpadAnalysis(selectedDeal, formData);
   };
 
   // Mock key contacts - in production, fetch from contacts linked to deal
@@ -240,7 +258,7 @@ export default function OpportunitiesManager({
 
   return (
     <>
-      <DealsPage onDealClick={handleDealClick} />
+      <DealsPage onDealClick={handleDealClick} onCoachDeal={(deal) => openScoutpadAnalysis(deal)} />
       
       {/* Deal Edit Dialog */}
       <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
@@ -481,6 +499,30 @@ export default function OpportunitiesManager({
               </Button>
             </div>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={isCoachingOpen}
+        onOpenChange={(open) => {
+          setIsCoachingOpen(open);
+          if (!open) setCoachingDeal(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto z-[60]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-purple-500" />
+              {coachingDeal?.name || 'Deal'} - SCOUTPAD Analysis
+            </DialogTitle>
+          </DialogHeader>
+          {coachingDeal && (
+            <SimplifiedCoachingPanel
+              deal={coachingDeal}
+              dealId={coachingDeal.id}
+              onCoachingUpdate={(_coaching: DealCoachingResult) => undefined}
+            />
+          )}
         </DialogContent>
       </Dialog>
     </>

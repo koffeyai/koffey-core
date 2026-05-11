@@ -86,8 +86,14 @@ export interface ToolExecutionContext {
       type?: string;
       id?: string;
       name?: string;
-    };
-    referencedEntities?: Record<string, Array<{ id: string; name: string }>>;
+    } | null;
+    referencedEntities?: Record<string, Array<{
+      id: string;
+      name: string;
+      selectionGroup?: string;
+      selectionIndex?: number;
+      referencedAt?: string | number;
+    }>>;
   };
   sessionId?: string;
   sessionTable?: 'chat_sessions' | 'messaging_sessions';

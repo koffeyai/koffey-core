@@ -263,6 +263,58 @@ function formatDealContext(result) {
   return lines.join('\n');
 }
 
+function formatAccountContext(result) {
+  const account = result?.account || {};
+  if (!account?.id && !account?.name) return null;
+
+  const lines = [`Account context: ${rowName(account)}`];
+  const summary = result?.deal_summary || {};
+  const metrics = [];
+  if (typeof summary.open_deals === 'number') metrics.push(`${summary.open_deals} open ${pluralize('deal', summary.open_deals)}`);
+  const openValue = formatCurrency(Number(summary.open_pipeline_value ?? 0));
+  if (openValue) metrics.push(`${openValue} open pipeline`);
+  if (typeof summary.avg_open_probability === 'number') metrics.push(`${summary.avg_open_probability}% avg probability`);
+  if (metrics.length > 0) lines.push(`- Summary: ${metrics.join(' / ')}`);
+
+  const accountFacts = [];
+  if (account.industry) accountFacts.push(account.industry);
+  if (account.domain || account.website) accountFacts.push(account.domain || account.website);
+  if (account.health_score != null) accountFacts.push(`health ${account.health_score}`);
+  if (accountFacts.length > 0) lines.push(`- Account: ${accountFacts.join(' / ')}`);
+
+  const contacts = asRows(result?.contacts);
+  if (contacts.length > 0) {
+    lines.push(`- Contacts: ${contacts.slice(0, 5).map((contact) => {
+      const facts = [];
+      if (contact.title || contact.position) facts.push(contact.title || contact.position);
+      if (contact.email) facts.push(contact.email);
+      return `${rowName(contact)}${facts.length ? ` (${facts.join(', ')})` : ''}`;
+    }).join('; ')}`);
+  }
+
+  const deals = asRows(result?.deals);
+  if (deals.length > 0) {
+    lines.push(`- Deals: ${deals.slice(0, 5).map(formatRow).join('; ')}`);
+  }
+
+  const activities = asRows(result?.recent_activities);
+  if (activities.length > 0) {
+    lines.push(`- Recent activity: ${activities.slice(0, 3).map(formatRow).join('; ')}`);
+  }
+
+  const emails = asRows(result?.recent_email_messages);
+  const emailSummary = result?.email_summary || {};
+  if (emails.length > 0 || emailSummary.recent_window_count > 0) {
+    const lastEmail = emailSummary.last_email_at ? `last email ${emailSummary.last_email_at}` : null;
+    lines.push(`- Email context: ${emailSummary.recent_window_count ?? emails.length} recent message${lastEmail ? `, ${lastEmail}` : ''}`);
+  }
+
+  const tasks = asRows(result?.open_tasks);
+  if (tasks.length > 0) lines.push(`- Open tasks: ${tasks.slice(0, 3).map(formatRow).join('; ')}`);
+
+  return lines.join('\n');
+}
+
 function formatSuggestions(result) {
   const suggestions = Array.isArray(result?.suggestions) ? result.suggestions : [];
   if (suggestions.length === 0) return null;
@@ -325,6 +377,27 @@ export function buildToolOnlyResponseForMessage(operations, message = '') {
     }
     if (op?.tool === 'get_deal_context') {
       const formatted = formatDealContext(op.result);
+      if (formatted) {
+        lines.push(formatted);
+        continue;
+      }
+    }
+    if (op?.tool === 'get_account_context') {
+      const formatted = formatAccountContext(op.result);
+      if (formatted) {
+        lines.push(formatted);
+        continue;
+      }
+    }
+    if (op?.tool === 'get_context_resource') {
+      const resourceTool = op.result?.__contextResource?.tool;
+      const formatted = resourceTool === 'get_account_context'
+        ? formatAccountContext(op.result)
+        : resourceTool === 'get_deal_context'
+          ? formatDealContext(op.result)
+          : resourceTool === 'get_pipeline_context'
+            ? formatPipelineContext(op.result)
+            : null;
       if (formatted) {
         lines.push(formatted);
         continue;

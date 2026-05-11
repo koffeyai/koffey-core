@@ -5,6 +5,14 @@ function buildEntityArgs(contract, idKey, nameKey) {
   return args;
 }
 
+function buildContextResourceArgs(contract, resourceType, entityType) {
+  const args = { resource_type: resourceType };
+  if (entityType) args.entity_type = entityType;
+  if (contract?.entityId) args.entity_id = contract.entityId;
+  else if (contract?.entityHint) args.entity_name = contract.entityHint;
+  return args;
+}
+
 export function resolveRetrievalPlan(contract) {
   const safe = contract && typeof contract === 'object' ? contract : {};
   const intent = String(safe.intent || 'unknown');
@@ -26,11 +34,11 @@ export function resolveRetrievalPlan(contract) {
       if (resolvedTimeRange?.end) args.period_end = resolvedTimeRange.end;
       return {
         path: 'pipeline_context',
-        preferredTools: ['get_pipeline_context'],
-        forcedTool: 'get_pipeline_context',
+        preferredTools: ['get_context_resource'],
+        forcedTool: 'get_context_resource',
         requiresClarification: false,
         clarificationReason: null,
-        args,
+        args: { resource_type: 'pipeline_context', ...args },
       };
     }
     case 'pipeline_window': {
@@ -39,42 +47,42 @@ export function resolveRetrievalPlan(contract) {
       if (resolvedTimeRange?.end) args.period_end = resolvedTimeRange.end;
       return {
         path: 'pipeline_context',
-        preferredTools: ['get_pipeline_context'],
-        forcedTool: 'get_pipeline_context',
+        preferredTools: ['get_context_resource'],
+        forcedTool: 'get_context_resource',
         requiresClarification: false,
         clarificationReason: null,
-        args,
+        args: { resource_type: 'pipeline_context', ...args },
       };
     }
     case 'entity_lookup':
       if (safe.entityType === 'deal') {
         return {
           path: 'deal_context',
-          preferredTools: ['get_deal_context'],
-          forcedTool: 'get_deal_context',
+          preferredTools: ['get_context_resource'],
+          forcedTool: 'get_context_resource',
           requiresClarification: !safe.entityId && !safe.entityHint,
           clarificationReason: !safe.entityId && !safe.entityHint ? 'Which deal would you like context on?' : null,
-          args: buildEntityArgs(safe, 'deal_id', 'deal_name'),
+          args: buildContextResourceArgs(safe, 'deal_context'),
         };
       }
       if (safe.entityType === 'contact') {
         return {
           path: 'contact_context',
-          preferredTools: ['get_contact_context'],
-          forcedTool: 'get_contact_context',
+          preferredTools: ['get_context_resource'],
+          forcedTool: 'get_context_resource',
           requiresClarification: !safe.entityId && !safe.entityHint,
           clarificationReason: !safe.entityId && !safe.entityHint ? 'Which contact would you like context on?' : null,
-          args: buildEntityArgs(safe, 'contact_id', 'contact_name'),
+          args: buildContextResourceArgs(safe, 'contact_context'),
         };
       }
       if (safe.entityType === 'account') {
         return {
-          path: 'planner_fallback',
-          preferredTools: ['search_crm'],
-          forcedTool: null,
+          path: 'account_context',
+          preferredTools: ['get_context_resource'],
+          forcedTool: 'get_context_resource',
           requiresClarification: !safe.entityId && !safe.entityHint,
           clarificationReason: !safe.entityId && !safe.entityHint ? 'Which account are you asking about?' : null,
-          args: {},
+          args: buildContextResourceArgs(safe, 'account_context'),
         };
       }
       return {
@@ -92,11 +100,11 @@ export function resolveRetrievalPlan(contract) {
       else if (safe.entityHint) args.entity_name = safe.entityHint;
       return {
         path: 'entity_messages',
-        preferredTools: ['get_entity_messages'],
-        forcedTool: 'get_entity_messages',
+        preferredTools: ['get_context_resource'],
+        forcedTool: 'get_context_resource',
         requiresClarification: !safe.entityId && !safe.entityHint,
         clarificationReason: !safe.entityId && !safe.entityHint ? 'Which deal, contact, or account should I pull messages for?' : null,
-        args,
+        args: { resource_type: 'entity_messages', ...args },
       };
     }
     case 'drafting':

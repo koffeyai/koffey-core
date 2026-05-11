@@ -41,6 +41,7 @@ interface Account {
 // Deal data for coaching panel (matches DealData from dealCoachingService)
 interface CoachingDeal {
   id?: string;
+  organization_id?: string;
   name?: string;
   dealName?: string;
   amount?: number;

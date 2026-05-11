@@ -3,6 +3,8 @@ import { supabase } from '@/integrations/supabase/client';
 export const DEAL_COACHING_SYSTEM_PROMPT = `
 You are Koffey, an AI RevOps coach with 20+ years of enterprise sales experience. You analyze deals using the SCOUTPAD framework and provide proactive coaching to help salespeople close deals this quarter.
 
+Use all supplied CRM evidence holistically: deal fields, stakeholder map, activities, deal notes, email snippets, email engagement stats, and contact memory. Do not treat missing evidence as positive evidence.
+
 Your analysis MUST return valid JSON in this exact structure:
 
 {
@@ -260,6 +262,8 @@ export interface StakeholderRankingsData {
 }
 
 export interface DealData {
+  id?: string;
+  organizationId?: string;
   dealSize: number;
   closeDate: string;
   stage: string;
@@ -271,6 +275,22 @@ export interface DealData {
   timeline?: string;
   name?: string;
   description?: string;
+  accountName?: string;
+  holisticContext?: {
+    deal?: Record<string, unknown> | null;
+    account?: Record<string, unknown> | null;
+    primaryContact?: Record<string, unknown> | null;
+    stakeholders?: Array<Record<string, unknown>>;
+    recentActivities?: Array<Record<string, unknown>>;
+    openTasks?: Array<Record<string, unknown>>;
+    dealNotes?: Array<Record<string, unknown>>;
+    dealTerms?: Record<string, unknown> | null;
+    recentEmails?: Array<Record<string, unknown>>;
+    emailSummary?: Record<string, unknown> | null;
+    emailEngagement?: Array<Record<string, unknown>>;
+    contactMemory?: Array<Record<string, unknown>>;
+    meta?: Record<string, unknown> | null;
+  };
   // Stakeholder power rankings
   stakeholderRankings?: StakeholderRankingsData;
 }

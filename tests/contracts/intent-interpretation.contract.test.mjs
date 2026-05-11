@@ -224,6 +224,98 @@ test('interpretMessageIntent uses context when model leaves entity unresolved', 
   assert.equal(contract.entityHint, 'Acme Expansion');
 });
 
+test('interpretMessageIntent resolves numbered account clarification replies from selection context', async () => {
+  let extractorCalled = false;
+  const context = {
+    historyText: 'I found 2 matching accounts for "Northstar Robotics". Which one should I use?',
+    entityContext: {
+      referencedEntities: {
+        accounts: [
+          {
+            type: 'account',
+            id: 'account-1',
+            name: 'Northstar Robotics',
+            referencedAt: '2026-05-10T12:00:02.000Z',
+            selectionGroup: 'account:northstar',
+            selectionIndex: 1,
+          },
+          {
+            type: 'account',
+            id: 'account-2',
+            name: 'Northstar Robotics Smoke',
+            referencedAt: '2026-05-10T12:00:01.000Z',
+            selectionGroup: 'account:northstar',
+            selectionIndex: 2,
+          },
+        ],
+      },
+      primaryEntity: null,
+    },
+  };
+
+  const contract = await interpretMessageIntent(
+    '1',
+    context,
+    {
+      now: FIXED_NOW,
+      extractor: async () => {
+        extractorCalled = true;
+        return { intent: 'unknown', confidence: 0.5 };
+      },
+    },
+  );
+
+  assert.equal(extractorCalled, false);
+  assert.equal(contract.intent, 'entity_lookup');
+  assert.equal(contract.classificationSource, 'context');
+  assert.equal(contract.entityType, 'account');
+  assert.equal(contract.entityId, 'account-1');
+  assert.equal(contract.entityHint, 'Northstar Robotics');
+  assert.equal(contract.executionPath, 'standard');
+  assert.ok(contract.domains.includes('context'));
+});
+
+test('interpretMessageIntentHeuristic resolves ordinal clarification replies from the newest selection group', () => {
+  const contract = interpretMessageIntentHeuristic('the second one', {
+    entityContext: {
+      referencedEntities: {
+        accounts: [
+          {
+            type: 'account',
+            id: 'older-account-1',
+            name: 'Older Account One',
+            referencedAt: '2026-05-10T11:00:02.000Z',
+            selectionGroup: 'account:older',
+            selectionIndex: 1,
+          },
+          {
+            type: 'account',
+            id: 'account-1',
+            name: 'Northstar Robotics',
+            referencedAt: '2026-05-10T12:00:02.000Z',
+            selectionGroup: 'account:newer',
+            selectionIndex: 1,
+          },
+          {
+            type: 'account',
+            id: 'account-2',
+            name: 'Northstar Robotics Smoke',
+            referencedAt: '2026-05-10T12:00:01.000Z',
+            selectionGroup: 'account:newer',
+            selectionIndex: 2,
+          },
+        ],
+      },
+      primaryEntity: null,
+    },
+  });
+
+  assert.equal(contract.intent, 'entity_lookup');
+  assert.equal(contract.entityType, 'account');
+  assert.equal(contract.entityId, 'account-2');
+  assert.equal(contract.entityHint, 'Northstar Robotics Smoke');
+});
+
 test('interpretMessageIntentHeuristic preserves current scoutpad routing behavior', () => {
   const contract = interpretMessageIntentHeuristic('can you run an analysis of the coca cola deal?');
   assert.equal(contract.intent, 'deal_analysis');
@@ -248,6 +340,13 @@ test('interpretMessageIntentHeuristic treats conversational status asks as CRM l
   const contract = interpretMessageIntentHeuristic('hows it going with apex');
   assert.equal(contract.intent, 'entity_lookup');
   assert.equal(contract.entityHint, 'apex');
+});
+
+test('interpretMessageIntentHeuristic treats explicit account context phrasing as account lookup', () => {
+  const contract = interpretMessageIntentHeuristic('give me account context for Northstar Robotics');
+  assert.equal(contract.intent, 'entity_lookup');
+  assert.equal(contract.entityType, 'account');
+  assert.equal(contract.entityHint, 'Northstar Robotics');
 });
 
 test('interpretMessageIntentHeuristic treats closable-quarter asks as pipeline window requests', () => {

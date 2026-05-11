@@ -241,13 +241,16 @@ export function buildPlannerIntentContext(intent: any, retrievalPlan: any) {
     lines.push(`ENTITY_HINT: ${intent.entityHint}`);
   }
   if (retrievalPlan.path === 'draft_with_context') {
-    lines.push('DRAFTING_RULE: Retrieve CRM context with get_deal_context or get_contact_context before calling draft_email. Do not write a generic template without CRM context.');
+    lines.push('DRAFTING_RULE: Retrieve CRM context with get_context_resource, get_deal_context, get_account_context, or get_contact_context before calling draft_email. Do not write a generic template without CRM context.');
   }
   if (retrievalPlan.path === 'entity_messages') {
-    lines.push('MESSAGE_HISTORY_RULE: Use get_entity_messages. Do not answer from chat history alone.');
+    lines.push('MESSAGE_HISTORY_RULE: Use get_context_resource or get_entity_messages. Do not answer from chat history alone.');
   }
   if (retrievalPlan.path === 'pipeline_context') {
-    lines.push('PIPELINE_RULE: Use get_pipeline_context for pipeline/focus/window asks instead of freeform summary generation.');
+    lines.push('PIPELINE_RULE: Use get_context_resource or get_pipeline_context for pipeline/focus/window asks instead of freeform summary generation.');
+  }
+  if (retrievalPlan.path === 'account_context') {
+    lines.push('ACCOUNT_CONTEXT_RULE: Use get_context_resource or get_account_context for account/company overviews instead of multiple search_crm calls.');
   }
   if (retrievalPlan.path === 'planner_fallback' && ['entity_lookup', 'crm_lookup'].includes(String(intent?.intent || ''))) {
     lines.push('CRM_LOOKUP_RULE: This request still needs CRM data. Use search_crm instead of answering from general knowledge or planning prose.');

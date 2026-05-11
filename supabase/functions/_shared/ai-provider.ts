@@ -307,6 +307,9 @@ export interface CallOptions {
   tier: ModelTier;
   temperature?: number;
   maxTokens?: number;
+  maxAttempts?: number;
+  providerLimit?: number;
+  providerTimeoutMs?: number;
   tools?: any[];
   tool_choice?: any;
   jsonMode?: boolean;
@@ -472,7 +475,7 @@ export async function callWithFallback(options: CallOptions): Promise<CallResult
 
   let lastError: Error | null = null;
   let attempt = 0;
-  const maxAttempts = Math.max(1, Number(Deno.env.get('AI_PROVIDER_MAX_ATTEMPTS') || '2'));
+  const maxAttempts = Math.max(1, Number(options.maxAttempts || Deno.env.get('AI_PROVIDER_MAX_ATTEMPTS') || '2'));
   const lmstudioFirstPasses = Math.max(1, Number(Deno.env.get('LMSTUDIO_PRIMARY_RETRY_PASSES') || '2'));
   const compactRetryEnabled = (Deno.env.get('AI_RETRY_COMPACT') || 'true').toLowerCase() === 'true';
 
@@ -488,9 +491,13 @@ export async function callWithFallback(options: CallOptions): Promise<CallResult
     const lmstudioPriorityWindow = providerChain[0] === 'lmstudio' && attempt <= lmstudioFirstPasses;
     // Keep LM Studio first during priority passes, but never exclusive.
     // If it's unhealthy/unreachable we should still attempt the remaining active providers.
-    const activeChain = lmstudioPriorityWindow
+    const activeChainBase = lmstudioPriorityWindow
       ? ['lmstudio', ...providerChain.filter((name) => name !== 'lmstudio')]
       : providerChain;
+    const providerLimit = Number.isFinite(Number(options.providerLimit)) && Number(options.providerLimit) > 0
+      ? Number(options.providerLimit)
+      : activeChainBase.length;
+    const activeChain = activeChainBase.slice(0, providerLimit);
 
     for (const providerName of activeChain) {
       const provider = PROVIDERS[providerName];
@@ -529,6 +536,7 @@ export async function callWithFallback(options: CallOptions): Promise<CallResult
             tools: attemptTools,
             tool_choice,
             jsonMode,
+            timeoutMs: options.providerTimeoutMs,
           });
 
           console.log(`[ai-provider] Success with ${providerName} (${model})${result.usage ? ` [${result.usage.totalTokens} tokens]` : ''}`);
@@ -600,6 +608,7 @@ interface ProviderCallOptions {
   tools?: any[];
   tool_choice?: any;
   jsonMode?: boolean;
+  timeoutMs?: number;
 }
 
 async function callProvider(
@@ -651,9 +660,9 @@ async function callProvider(
   }
 
   const controller = new AbortController();
-  const providerTimeoutMs = provider.name === 'lmstudio'
+  const providerTimeoutMs = options.timeoutMs || (provider.name === 'lmstudio'
     ? Number(Deno.env.get('LMSTUDIO_TIMEOUT_MS') || '45000')
-    : Number(Deno.env.get('AI_PROVIDER_TIMEOUT_MS') || '35000');
+    : Number(Deno.env.get('AI_PROVIDER_TIMEOUT_MS') || '35000'));
   const timeoutId = setTimeout(() => controller.abort(), providerTimeoutMs);
 
   try {

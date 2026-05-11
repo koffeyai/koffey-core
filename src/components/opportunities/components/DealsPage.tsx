@@ -49,6 +49,7 @@ export interface Deal {
 
 interface DealsPageProps {
   onDealClick: (deal: Deal) => void;
+  onCoachDeal?: (deal: Deal) => void;
 }
 
 const DEAL_STAGES = [
@@ -60,7 +61,7 @@ const DEAL_STAGES = [
   'closed-lost'
 ];
 
-export function DealsPage({ onDealClick }: DealsPageProps) {
+export function DealsPage({ onDealClick, onCoachDeal }: DealsPageProps) {
   const { user } = useAuth();
   const { userRole } = useRoleBasedAccess();
 
@@ -221,7 +222,10 @@ export function DealsPage({ onDealClick }: DealsPageProps) {
   };
 
   const handleCoachDeal = (deal: Deal) => {
-    // Use global coaching dialog from dialogStore
+    if (onCoachDeal) {
+      onCoachDeal(deal);
+      return;
+    }
     openCoachingDialog(deal);
   };
 

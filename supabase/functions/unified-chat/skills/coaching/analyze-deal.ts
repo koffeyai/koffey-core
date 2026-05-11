@@ -77,6 +77,7 @@ function formatDealForUI(deal: any, zoomLevel: 'tactical' | 'strategic' = 'tacti
     close_date: deal.close_date,
     description: deal.description,
     notes: deal.notes,
+    organization_id: deal.organization_id,
     account_id: deal.account_id,
     account_name: deal.accounts?.name,
     stakeholders: deal.stakeholders,

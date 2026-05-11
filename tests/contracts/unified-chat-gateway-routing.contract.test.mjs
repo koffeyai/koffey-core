@@ -73,6 +73,21 @@ test('forced retrieval shortcuts still run when no pending mutation plan is avai
   }), true);
 });
 
+test('account context retrieval requires tools and can use forced shortcut', async () => {
+  installDenoEnv();
+  const {
+    shouldRetrievalPlanRequireTools,
+    shouldUseLiveForcedRetrievalPlan,
+  } = await import(`${routingModuleUrl}?t=account-context`);
+
+  assert.equal(shouldRetrievalPlanRequireTools({ path: 'account_context' }), true);
+  assert.equal(shouldUseLiveForcedRetrievalPlan({
+    shouldHonorRetrievalPlan: true,
+    retrievalPlan: { path: 'account_context', forcedTool: 'get_account_context' },
+    deterministicPendingDealPlanAvailable: false,
+  }), true);
+});
+
 test('pending deal context disables preferred retrieval tool narrowing', async () => {
   installDenoEnv();
   const { shouldApplyPreferredRetrievalToolFilter } = await import(`${routingModuleUrl}?t=pending-preferred-filter`);

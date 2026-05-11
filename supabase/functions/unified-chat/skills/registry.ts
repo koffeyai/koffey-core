@@ -85,9 +85,11 @@ import linkEmailToCrm from './email/link-email-to-crm.ts';
 
 // Context (LLM-optimized entity retrieval)
 import getDealContext from './context/get-deal-context.ts';
+import getAccountContext from './context/get-account-context.ts';
 import getContactContext from './context/get-contact-context.ts';
 import getEntityMessages from './context/get-entity-messages.ts';
 import getPipelineContext from './context/get-pipeline-context.ts';
+import getContextResource from './context/get-context-resource.ts';
 
 // ============================================================================
 // Skill Registry
@@ -151,9 +153,11 @@ const ALL_SKILLS: SkillDefinition[] = [
   linkEmailToCrm,
   // Context
   getDealContext,
+  getAccountContext,
   getContactContext,
   getEntityMessages,
   getPipelineContext,
+  getContextResource,
 ];
 
 /** Map for O(1) lookup by tool function name */

@@ -31,6 +31,7 @@ export function shouldRetrievalPlanRequireTools(retrievalPlan: { path?: string |
     'scoutpad',
     'pipeline_context',
     'deal_context',
+    'account_context',
     'contact_context',
     'entity_messages',
     'draft_with_context',
@@ -63,7 +64,7 @@ export function shouldUseLiveForcedRetrievalPlan(params: {
   if (!path || !forcedTool) return false;
   if (params.deterministicPendingDealPlanAvailable) return false;
 
-  return ['pipeline_context', 'deal_context', 'contact_context', 'entity_messages'].includes(path);
+  return ['pipeline_context', 'deal_context', 'account_context', 'contact_context', 'entity_messages'].includes(path);
 }
 
 export function shouldApplyPreferredRetrievalToolFilter(params: {

@@ -25,6 +25,12 @@ export interface EntityReference {
   type: EntityType;
   /** Additional context (stage, industry, role) */
   subtitle?: string;
+  /** Ambiguous option group from the last clarification prompt */
+  selectionGroup?: string;
+  /** 1-based option number shown to the user */
+  selectionIndex?: number;
+  /** Original fuzzy label that produced this option list */
+  selectionLabel?: string;
   /** Timestamp when referenced (epoch ms or ISO string from backend) */
   referencedAt: number | string;
 }
@@ -44,7 +50,7 @@ export interface EntityContext {
   /** Entities from the previous response */
   referencedEntities?: ReferencedEntities;
   /** The most recently referenced entity (for "it", "that" resolution) */
-  primaryEntity?: EntityReference;
+  primaryEntity?: EntityReference | null;
 }
 
 // ============================================================================
@@ -55,7 +61,7 @@ export interface EntityContextMetadata {
   /** Entities mentioned/returned in this response */
   referencedEntities: ReferencedEntities;
   /** Primary entity if a single entity was the focus */
-  primaryEntity?: EntityReference;
+  primaryEntity?: EntityReference | null;
 }
 
 // ============================================================================

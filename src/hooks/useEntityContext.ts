@@ -42,7 +42,7 @@ const SAVE_DEBOUNCE_MS = 1000;
 
 interface PersistedEntityContext {
   referencedEntities: ReferencedEntities;
-  primaryEntity?: EntityReference;
+  primaryEntity?: EntityReference | null;
   updatedAt: number;
 }
 
@@ -55,7 +55,7 @@ interface UseEntityContextReturn {
   /** Current context to pass to backend */
   entityContext: {
     referencedEntities?: ReferencedEntities;
-    primaryEntity?: EntityReference;
+    primaryEntity?: EntityReference | null;
   };
   /** Update context from response */
   updateContext: (response: EntityContextMetadata) => void;
@@ -285,6 +285,8 @@ export function useEntityContext({
 
     // Sanitize incoming data
     const sanitizedIncoming = sanitizeEntityContext(response.referencedEntities);
+    const hasPrimaryEntityField = Object.prototype.hasOwnProperty.call(response, 'primaryEntity');
+    const nextPrimaryEntity = hasPrimaryEntityField ? (response.primaryEntity || undefined) : primaryEntity;
     
     setReferencedEntities(prev => {
       const merged = mergeEntityContext(prev, sanitizedIncoming);
@@ -292,7 +294,7 @@ export function useEntityContext({
       // Prepare for persistence
       const persisted: PersistedEntityContext = {
         referencedEntities: merged,
-        primaryEntity: response.primaryEntity || primaryEntity,
+        primaryEntity: nextPrimaryEntity,
         updatedAt: Date.now()
       };
       
@@ -300,8 +302,8 @@ export function useEntityContext({
       return merged;
     });
 
-    if (response.primaryEntity) {
-      setPrimaryEntity(response.primaryEntity);
+    if (hasPrimaryEntityField) {
+      setPrimaryEntity(nextPrimaryEntity);
     }
   }, [primaryEntity, scheduleSave]);
 
