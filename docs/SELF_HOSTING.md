@@ -2,6 +2,33 @@
 
 Complete guide to running Koffey.ai with a local frontend and your own hosted Supabase project.
 
+## What You Provide
+
+Koffey is a bring-your-own-credentials application. The repository gives you the app, schema, edge functions, setup scripts, and validation checks. You provide the cloud projects and API keys, and `npm run setup` deploys into those accounts.
+
+Required for the core CRM:
+
+| Item | Use | Where to get it |
+|------|-----|-----------------|
+| Supabase project URL | Browser and edge-function API base URL | Supabase Dashboard -> Project Settings -> API |
+| Supabase anon key | Frontend-safe API key | Supabase Dashboard -> Project Settings -> API |
+| Supabase service role key | Server-side edge-function access | Supabase Dashboard -> Project Settings -> API |
+| Supabase project ref | Keeps schema, secrets, and functions pointed at the same project | Supabase Dashboard -> Project Settings -> General |
+| Supabase database URL | Applies the database schema | Supabase Dashboard -> Connect -> Session pooler |
+| Supabase personal access token | Lets the CLI deploy functions and secrets | Supabase Dashboard -> Account -> Access Tokens |
+| One AI provider key | Powers chat, analysis, drafting, and tool selection | Kimi/Moonshot, Groq, Anthropic, or Gemini |
+
+Optional provider accounts:
+
+| Integration | Required only if you want... |
+|-------------|------------------------------|
+| Google Cloud OAuth | Calendar events, Gmail sync/send, Drive exports |
+| Twilio | WhatsApp adapter |
+| Telegram Bot API | Telegram adapter |
+| Resend | Resend-backed email sending |
+
+`npm run doctor` separates these states intentionally: `FAIL` blocks the current configuration, `MANUAL` is a console step you complete in your own account, and `SKIP` means an optional integration is not configured.
+
 ## Prerequisites
 
 - **Node.js 20+** — check with `node --version`
@@ -135,10 +162,10 @@ Doctor is read-only. It checks:
 1. `.env` values and project-ref consistency
 2. Supabase Auth and REST reachability using your frontend key
 3. Supabase service-role reachability using `SUPABASE_SERVICE_ROLE_KEY`
-4. Deployed Google OAuth configuration, token-storage readiness, Google client-secret validity, and live redirect URI
+4. Deployed Google OAuth configuration, token-storage readiness, Google client-secret validity, and live redirect URI when Google credentials are configured
 5. Manual dashboard checklist items that cannot safely be changed from the repo
 
-If Doctor reports `FAIL`, fix those before testing signup. `MANUAL` items are expected for dashboard-only setup steps.
+If Doctor reports `FAIL`, fix those before testing signup. `MANUAL` items are expected for dashboard-only setup steps in your own Supabase or Google Cloud account. `SKIP` items are optional integrations you have not enabled.
 
 ### 7. Start Development
 
@@ -219,7 +246,11 @@ This is separate from "Sign in with Google" via Supabase Auth. Calendar, Gmail, 
 6. **Configure OAuth consent screen**:
    - Go to **APIs & Services → OAuth consent screen**
    - Add your email as a test user (required while app is in "Testing" status)
-   - Request scopes: `calendar`, `gmail.readonly`, `drive.file`
+   - Request scopes you plan to use:
+     - `https://www.googleapis.com/auth/calendar`
+     - `https://www.googleapis.com/auth/gmail.readonly`
+     - `https://www.googleapis.com/auth/gmail.send`
+     - `https://www.googleapis.com/auth/drive.file`
 
 After setup, users connect their Google account from **Settings → Integrations** in the app.
 
@@ -341,10 +372,6 @@ Common causes: the `organizations` table doesn't exist (schema not pushed), or R
 ### Functions deploy but return 401
 
 Every edge function needs `verify_jwt = false` in `supabase/config.toml` because JWT validation happens in application code (`_shared/security.ts`), not at the gateway. If you added a new function and forgot the config entry, it will reject all requests with 401.
-
-### Port 5173 is in use
-
-Edit `vite.config.ts` and change `port: 5173` to another port.
 
 ### Port 5173 is in use
 

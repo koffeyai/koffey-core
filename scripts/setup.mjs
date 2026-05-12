@@ -219,7 +219,7 @@ function validateEnv(env, flags) {
   const hasGoogleClientId = !!env.GOOGLE_CLIENT_ID;
   const hasGoogleClientSecret = !!env.GOOGLE_CLIENT_SECRET;
   if (!hasGoogleClientId || !hasGoogleClientSecret) {
-    warn('Google Calendar/Gmail/Drive integrations are disabled until GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set and npm run setup is rerun.');
+    warn('Optional Google Calendar/Gmail/Drive integrations are disabled until both GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set and npm run setup is rerun. Core CRM can still run without them.');
   }
 }
 
@@ -334,7 +334,7 @@ function main() {
     } else {
       warn(`${flags.envFile} already exists; leaving it unchanged.`);
     }
-    console.log(`\nNext step:\n  1. Edit ${flags.envFile} with your Supabase credentials and API keys.\n  2. Run: node scripts/setup.mjs\n`);
+    console.log(`\nNext step:\n  1. Edit ${flags.envFile} with your Supabase credentials and at least one AI provider key.\n  2. Run: node scripts/setup.mjs\n  3. Run: npm run doctor\n\nOptional integrations such as Google Calendar/Gmail require their own provider credentials before they are enabled.\n`);
     process.exit(0);
   }
 
@@ -365,9 +365,11 @@ Before your first sign-in:
   1. In Supabase Dashboard → Auth → URL Configuration, set:
      - Site URL: ${appUrl}
      - Redirect URLs: ${appUrl}/**
-  2. Run: npm run dev
-  3. Open ${appUrl} and sign up to create your account and organization.
-  4. If you deploy the frontend elsewhere, carry over VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.
+  2. Run: npm run doctor
+  3. Complete any MANUAL dashboard items in your own Supabase or provider consoles.
+  4. Run: npm run dev
+  5. Open ${appUrl} and sign up to create your account and organization.
+  6. If you deploy the frontend elsewhere, carry over VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.
 `);
 }
 

@@ -86,6 +86,14 @@ function isSet(value) {
   return true;
 }
 
+function hasGoogleOAuthCredentials(env) {
+  return isSet(env.GOOGLE_CLIENT_ID) && isSet(env.GOOGLE_CLIENT_SECRET);
+}
+
+function hasPartialGoogleOAuthCredentials(env) {
+  return isSet(env.GOOGLE_CLIENT_ID) || isSet(env.GOOGLE_CLIENT_SECRET);
+}
+
 function mask(value) {
   const normalized = String(value ?? '');
   if (!normalized) return '<empty>';
@@ -226,6 +234,16 @@ async function checkGoogleOAuthStatus(results, env) {
     append(results, 'skip', 'Google OAuth status endpoint', 'Missing VITE_SUPABASE_URL.');
     return;
   }
+  if (!hasGoogleOAuthCredentials(env)) {
+    append(
+      results,
+      'skip',
+      'Google OAuth status endpoint',
+      'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are not configured.',
+      'Core CRM works without Google. Add both values and rerun npm run setup when enabling Calendar, Gmail, or Drive.',
+    );
+    return;
+  }
 
   const baseUrl = String(env.VITE_SUPABASE_URL).replace(/\/$/, '');
   const statusUrl = `${baseUrl}/functions/v1/google-oauth?mode=status`;
@@ -314,8 +332,8 @@ async function checkGoogleOAuthStart(results, env) {
     return;
   }
 
-  if (!isSet(env.GOOGLE_CLIENT_ID)) {
-    append(results, 'skip', 'Google OAuth start auth gate', 'GOOGLE_CLIENT_ID is not configured locally.');
+  if (!hasGoogleOAuthCredentials(env)) {
+    append(results, 'skip', 'Google OAuth start auth gate', 'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are not fully configured locally.');
     return;
   }
 
@@ -547,17 +565,23 @@ function checkLocalEnv(results, env, flags) {
     append(results, 'warn', 'Frontend app URL', 'No VITE_APP_URL / APP_URL / APP_BASE_URL / SITE_URL configured.', 'Use http://localhost:5173 for local development.');
   }
 
-  const hasGoogleClientId = isSet(env.GOOGLE_CLIENT_ID);
-  const hasGoogleClientSecret = isSet(env.GOOGLE_CLIENT_SECRET);
-  if (hasGoogleClientId && hasGoogleClientSecret) {
+  if (hasGoogleOAuthCredentials(env)) {
     append(results, 'pass', 'Local Google OAuth credentials', 'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set.');
+  } else if (hasPartialGoogleOAuthCredentials(env)) {
+    append(
+      results,
+      'fail',
+      'Local Google OAuth credentials',
+      'Only one of GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET is set.',
+      'Set both values or clear both values to run without Google integrations.',
+    );
   } else {
     append(
       results,
-      'manual',
+      'skip',
       'Local Google OAuth credentials',
       'Not fully configured. Core CRM can still run without Google integrations.',
-      'Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, then rerun npm run setup.',
+      'Add both values, then rerun npm run setup, when enabling Calendar, Gmail, or Drive.',
     );
   }
 }
@@ -612,21 +636,31 @@ function addManualChecklist(results, env) {
     'Supabase Dashboard -> Auth -> URL Configuration.',
   );
 
-  append(
-    results,
-    'manual',
-    'Google Cloud authorized redirect URI',
-    redirectUri,
-    'Google Cloud Console -> APIs & Services -> Credentials -> OAuth client -> Authorized redirect URIs.',
-  );
+  if (hasGoogleOAuthCredentials(env)) {
+    append(
+      results,
+      'manual',
+      'Google Cloud authorized redirect URI',
+      redirectUri,
+      'Google Cloud Console -> APIs & Services -> Credentials -> OAuth client -> Authorized redirect URIs.',
+    );
 
-  append(
-    results,
-    'manual',
-    'Google OAuth consent screen testers',
-    'Required while the app is in Google Testing mode.',
-    'Google Cloud Console -> APIs & Services -> OAuth consent screen -> Test users.',
-  );
+    append(
+      results,
+      'manual',
+      'Google OAuth consent screen testers',
+      'Required while the app is in Google Testing mode.',
+      'Google Cloud Console -> APIs & Services -> OAuth consent screen -> Test users.',
+    );
+  } else {
+    append(
+      results,
+      'skip',
+      'Google dashboard configuration',
+      'Google integrations are optional and no complete Google OAuth client is configured.',
+      'When enabling Google, add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, rerun npm run setup, then add the doctor-reported redirect URI in Google Cloud.',
+    );
+  }
 }
 
 function printResults(results) {
@@ -656,7 +690,7 @@ function printResults(results) {
   } else if ((counts.warn || 0) > 0) {
     console.log('\nDoctor found warnings. The app may run, but review WARN and MANUAL items.');
   } else {
-    console.log('\nDoctor found no automated blockers. Complete MANUAL dashboard items, then test signup in the browser.');
+    console.log('\nDoctor found no automated blockers. Complete MANUAL dashboard items in your own provider consoles, then test signup in the browser. SKIP items are optional integrations you have not enabled.');
   }
 }
 
