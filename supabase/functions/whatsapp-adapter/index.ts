@@ -265,6 +265,13 @@ async function handleStatusCallback(req: Request): Promise<Response> {
   }
 
   const bodyText = await req.text();
+  const isValid = await validateTwilioSignature(req, bodyText);
+  if (!isValid) {
+    return new Response(JSON.stringify({ success: false, error: "Invalid signature" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
   
   const params = new URLSearchParams(bodyText);
   const messageSid = params.get("MessageSid");

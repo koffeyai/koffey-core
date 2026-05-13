@@ -12,6 +12,7 @@
 
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { callWithFallback } from '../_shared/ai-provider.ts';
+import { AuthError, authenticateRequest, resolveAuthorizedOrganization } from '../_shared/auth.ts';
 import { getCorsHeaders, handleCorsOptions } from '../_shared/cors.ts';
 
 // ============================================================================
@@ -812,7 +813,8 @@ serve(async (req: Request): Promise<Response> => {
   corsHeaders = getCorsHeaders(req);
 const startTime = Date.now();
 
-  try {
+try {
+    const auth = await authenticateRequest(req);
     const body = await req.json() as ExtractionRequest;
     const { content, accountHint, opportunityHint, organizationId } = body;
 
@@ -823,6 +825,8 @@ const startTime = Date.now();
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    await resolveAuthorizedOrganization(auth.supabase, auth.userId, organizationId);
 
     if (!content || content.length < 50) {
       return new Response(
@@ -917,6 +921,16 @@ const startTime = Date.now();
 
   } catch (error: any) {
     const processingTime = Date.now() - startTime;
+    if (error instanceof AuthError) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: error.statusCode === 403 ? 'Access denied' : 'Authentication required',
+          meta: { processingTimeMs: processingTime }
+        }),
+        { status: error.statusCode, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
     
     console.error('[extraction-agent] Error:', {
       message: error.message,

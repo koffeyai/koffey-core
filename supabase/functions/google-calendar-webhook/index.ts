@@ -288,7 +288,7 @@ async function processEventChange(
 /**
  * Process webhook notification
  */
-async function processNotification(channelId: string, resourceState: string): Promise<void> {
+async function processNotification(channelId: string, resourceId: string, resourceState: string): Promise<void> {
   console.log(`[webhook] Processing notification for channel ${channelId}, state: ${resourceState}`);
 
   // Get the watch channel info
@@ -296,6 +296,8 @@ async function processNotification(channelId: string, resourceState: string): Pr
     .from('calendar_watch_channels')
     .select('*')
     .eq('channel_id', channelId)
+    .eq('resource_id', resourceId)
+    .eq('status', 'active')
     .single();
 
   if (channelError || !channel) {
@@ -411,13 +413,13 @@ Deno.serve(async (req) => {
 
     console.log(`[webhook] Received: channel=${channelId}, resource=${resourceId}, state=${resourceState}, msg=${messageNumber}`);
 
-    if (!channelId || !resourceState) {
+    if (!channelId || !resourceId || !resourceState) {
       return new Response('Missing required headers', { status: 400 });
     }
 
     // Process async to respond quickly to Google
     // Google expects a 200 response within a few seconds
-    processNotification(channelId, resourceState).catch(err => {
+    processNotification(channelId, resourceId, resourceState).catch(err => {
       console.error('[webhook] Async processing error:', err);
     });
 

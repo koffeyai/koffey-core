@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.50.0";
 import { isWithin24HourWindow } from "../_shared/messaging-utils.ts";
 import { getCorsHeaders, handleCorsOptions } from '../_shared/cors.ts';
+import { isInternalServiceCall } from '../_shared/auth.ts';
 
 let corsHeaders = getCorsHeaders();
 
@@ -13,6 +14,13 @@ serve(async (req) => {
   
   corsHeaders = getCorsHeaders(req);
 try {
+    if (!isInternalServiceCall(req)) {
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized: internal service call required' }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const { type, userId, organizationId, data } = await req.json();
     
     console.log(`[notification-router] Processing ${type} notification for user ${userId}`);

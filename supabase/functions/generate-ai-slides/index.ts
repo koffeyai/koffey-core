@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.50.0";
 import { callWithFallback, hasAnyProvider } from '../_shared/ai-provider.ts';
 import { getCorsHeaders, handleCorsOptions } from '../_shared/cors.ts';
+import { validateOrganizationAccess } from '../_shared/security.ts';
 
 let corsHeaders = getCorsHeaders();
 
@@ -117,10 +118,18 @@ const startTime = Date.now();
       });
     }
 
+    const { data: { user: authenticatedUser }, error: authError } = await supabase.auth.getUser();
+    if (authError || !authenticatedUser) {
+      return new Response(JSON.stringify({ error: 'Invalid authentication' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
     const body: GenerateRequest = await req.json();
     const {
       organizationId,
-      userId,
+      userId: requestedUserId,
       presentationType,
       slideCount,
       customInstructions,
@@ -133,13 +142,29 @@ const startTime = Date.now();
       logoUrl,
       styleKeywords
     } = body;
+    const userId = authenticatedUser.id;
 
     // Validate required fields
-    if (!organizationId || !userId || !presentationType || !accountId) {
+    if (!organizationId || !presentationType || !accountId) {
       return new Response(JSON.stringify({ 
-        error: 'Missing required fields: organizationId, userId, presentationType, accountId' 
+        error: 'Missing required fields: organizationId, presentationType, accountId'
       }), {
         status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    if (requestedUserId && requestedUserId !== authenticatedUser.id) {
+      return new Response(JSON.stringify({ error: 'Authenticated user does not match requested user' }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    const hasOrganizationAccess = await validateOrganizationAccess(supabase, authenticatedUser.id, organizationId);
+    if (!hasOrganizationAccess) {
+      return new Response(JSON.stringify({ error: 'Access to organization denied' }), {
+        status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }

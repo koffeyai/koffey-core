@@ -44,18 +44,18 @@ try {
 
     // ====== SECURITY: Extract user token for RLS forwarding ======
     const authHeader = req.headers.get('Authorization');
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
     if (authHeader?.startsWith('Bearer ')) {
       // Check if this is a user JWT (not service role key)
       const token = authHeader.replace('Bearer ', '');
-      // Service role key is longer and starts differently
-      if (token.startsWith('eyJ')) {
+      if (token.startsWith('eyJ') && token !== serviceRoleKey) {
         userToken = token;
       }
     }
     
     // Also check for X-User-Token header (forwarded from upstream)
     const forwardedToken = req.headers.get('X-User-Token');
-    if (forwardedToken) {
+    if (forwardedToken && forwardedToken !== serviceRoleKey) {
       userToken = forwardedToken;
     }
 

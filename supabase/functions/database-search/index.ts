@@ -5,6 +5,7 @@ import {
   createSecureErrorResponse 
 } from '../_shared/security.ts';
 import { getCorsHeaders, handleCorsOptions } from '../_shared/cors.ts';
+import { isInternalServiceCall } from '../_shared/auth.ts';
 
 let corsHeaders = getCorsHeaders();
 
@@ -133,7 +134,10 @@ try {
     }: SearchRequest = validation.sanitizedData;
 
     // ====== SECURITY: Create RLS-enforced client when possible ======
-    const userToken = req.headers.get('X-User-Token');
+    const authHeader = req.headers.get('Authorization') || '';
+    const internalCall = isInternalServiceCall(req);
+    const userToken = req.headers.get('X-User-Token') ||
+      (!internalCall && authHeader.startsWith('Bearer ') ? authHeader.replace(/^Bearer\s+/i, '') : '');
     let supabase;
     let usingRLS = false;
 
@@ -146,9 +150,40 @@ try {
           global: { headers: { Authorization: `Bearer ${userToken}` } }
         }
       );
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) {
+        return createSecureErrorResponse(
+          new Error('Invalid user token'),
+          'Unauthorized',
+          401
+        );
+      }
+      if (String(user.id) !== String(userId)) {
+        return createSecureErrorResponse(
+          new Error('Token user mismatch'),
+          'Authenticated user does not match requested user',
+          403
+        );
+      }
+      const hasAccess = await validateOrganizationAccess(supabase, user.id, organizationId);
+      if (!hasAccess) {
+        return createSecureErrorResponse(
+          new Error('Access denied'),
+          'Access to organization denied',
+          403
+        );
+      }
       usingRLS = true;
       console.log('🔒 Using RLS-enforced client');
     } else {
+      if (!internalCall) {
+        return createSecureErrorResponse(
+          new Error('Missing authentication'),
+          'Authentication required',
+          401
+        );
+      }
+
       // Fallback: Service role + manual organization filter
       // This is used for internal calls (e.g., from cron jobs) without user context
       console.warn('⚠️ No user token - using service role with manual org filter');

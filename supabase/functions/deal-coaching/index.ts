@@ -7,6 +7,7 @@ import {
   createSecureErrorResponse 
 } from '../_shared/security.ts';
 import { getCorsHeaders, handleCorsOptions } from '../_shared/cors.ts';
+import { AuthError, authenticateRequest } from '../_shared/auth.ts';
 import { AI_CONFIG } from '../_shared/ai-config.ts';
 import { callWithFallback } from '../_shared/ai-provider.ts';
 import { ensureQualityAnalytics, applyScoutpadGuardrails } from './scoutpad-quality.mjs';
@@ -565,14 +566,13 @@ const handler = async (req: Request): Promise<Response> => {
   }
 
   
-  corsHeaders = getCorsHeaders(req);
+corsHeaders = getCorsHeaders(req);
 try {
-    // Get user ID for rate limiting
-    const authHeader = req.headers.get('authorization');
-    const userId = authHeader?.replace('Bearer ', '') || 'anonymous';
+    const auth = await authenticateRequest(req);
+    const authenticatedUserId = auth.userId;
     
     // Rate limiting: 30 requests per hour per user (coaching is more intensive)
-    const rateLimitResult = checkRateLimit(`deal-coaching:${userId}`, {
+    const rateLimitResult = checkRateLimit(`deal-coaching:${authenticatedUserId}`, {
       requests: 30,
       windowMs: 3600000, // 1 hour
       blockDurationMs: 600000 // 10 minutes
@@ -605,19 +605,18 @@ try {
     const { 
       dealData, 
       organizationId,
-      userId: reqUserId,
       zoomLevel,
       accountContext
     } = validation.sanitizedData;
 
-    // Validate organization access if provided
-    if (organizationId && reqUserId) {
+    // Validate organization access with the authenticated JWT user, never with a client-supplied user id.
+    if (organizationId) {
       const supabase = createClient(
         Deno.env.get('SUPABASE_URL')!,
         Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
       );
       
-      const hasAccess = await validateOrganizationAccess(supabase, reqUserId, organizationId);
+      const hasAccess = await validateOrganizationAccess(supabase, authenticatedUserId, organizationId);
       if (!hasAccess) {
         return createSecureErrorResponse(
           new Error('Access denied'),
@@ -631,8 +630,8 @@ try {
     const result = await analyzeDeal(dealData, zoomLevel, accountContext);
 
     // Log the coaching session if org/user provided
-    if (organizationId && reqUserId) {
-      await logCoachingSession(dealData, result, organizationId, reqUserId);
+    if (organizationId) {
+      await logCoachingSession(dealData, result, organizationId, authenticatedUserId);
     }
 
     return new Response(
@@ -644,6 +643,24 @@ try {
     );
 
   } catch (error: any) {
+    if (error instanceof AuthError) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: {
+            code: error.statusCode === 403 ? 'access_denied' : 'auth_required',
+            message: error.statusCode === 403 ? 'Access denied' : 'Authentication required',
+            retryable: false,
+          },
+          timestamp: Date.now(),
+        }),
+        {
+          status: error.statusCode,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        }
+      );
+    }
+
     if (error instanceof ClientSafeError) {
       return new Response(
         JSON.stringify({

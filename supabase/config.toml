@@ -70,93 +70,97 @@ redirect_uri = ""
 url = ""
 
 # ===== EDGE FUNCTIONS SECURITY CONFIGURATION =====
-# SECURITY: JWT verification disabled - functions validate in code using getClaims()
-# This is required for signing-keys system compatibility
+# SECURITY: Gateway JWT verification is enabled by default. Only pre-auth,
+# webhook, and OAuth callback entry points remain public, and those functions
+# must validate their own invite code, HMAC/signature, state, or provider token.
 
-# PROTECTED: All AI-related functions require authentication (validated in code)
+# Protected application functions
 [functions.unified-chat]
-verify_jwt = false
+verify_jwt = true
 
 [functions.crm-operations]
-verify_jwt = false
+verify_jwt = true
 
 [functions.conversation-logger]
-verify_jwt = false
+verify_jwt = true
 
 [functions.grounded-validator]
-verify_jwt = false
+verify_jwt = true
 
 [functions.web-enrichment-orchestrator]
-verify_jwt = false
+verify_jwt = true
 
 [functions.database-search]
-verify_jwt = false
+verify_jwt = true
 
 [functions.enrich-website]
-verify_jwt = false
+verify_jwt = true
 
 [functions.generate-analytics-artifact]
-verify_jwt = false
+verify_jwt = true
 
 
 # Auth and organization management
+# Public pre-auth routing. Rate-limited and limited to low-sensitivity checks.
 [functions.handle-auth]
 verify_jwt = false
 
 [functions.create-org-with-user]
-verify_jwt = false
+verify_jwt = true
 
 [functions.create-org-invitation]
-verify_jwt = false
+verify_jwt = true
 
 [functions.accept-invite]
-verify_jwt = false
+verify_jwt = true
 
+# Public invite preview; redemption path validates the authenticated user.
 [functions.validate-invite]
 verify_jwt = false
 
 [functions.send-invitation-email]
-verify_jwt = false
+verify_jwt = true
 
 [functions.request-to-join]
-verify_jwt = false
+verify_jwt = true
 
 [functions.deal-coaching]
-verify_jwt = false
+verify_jwt = true
 
 [functions.export-backup]
-verify_jwt = false
+verify_jwt = true
 
 [functions.google-calendar]
-verify_jwt = false
+verify_jwt = true
 
 [functions.calendar-disconnect]
-verify_jwt = false
+verify_jwt = true
 
 # Google Calendar sync for tasks
 [functions.google-calendar-sync]
-verify_jwt = false
+verify_jwt = true
 
 [functions.store-google-token]
-verify_jwt = false
+verify_jwt = true
 
-# Google OAuth flow handler
+# Google OAuth callback handler; callback cannot carry an app JWT.
 [functions.google-oauth]
 verify_jwt = false
 
 # Slide Studio functions
 [functions.extract-template-structure]
-verify_jwt = false
+verify_jwt = true
 
 [functions.generate-ai-slides]
-verify_jwt = false
+verify_jwt = true
 
 [functions.generate-from-template]
-verify_jwt = false
+verify_jwt = true
 
 # Security validation function
 
-# Messaging gateway functions
+# Messaging gateway callbacks; provider webhooks and internal send actions are
+# validated inside each adapter.
 [functions.whatsapp-adapter]
 verify_jwt = false
 
@@ -164,54 +168,54 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.notification-router]
-verify_jwt = false
+verify_jwt = true
 
 # Extraction agent for meeting notes parsing
 [functions.extraction-agent]
-verify_jwt = false
+verify_jwt = true
 
 # Command Center daily briefing
 [functions.generate-briefing]
-verify_jwt = false
+verify_jwt = true
 
 # Google Drive upload for Slide Studio
 [functions.upload-to-drive]
-verify_jwt = false
+verify_jwt = true
 
 # Document processing with hybrid OCR
 [functions.process-document]
-verify_jwt = false
+verify_jwt = true
 
 # Memory system - Hot path (webhook-triggered, service role)
 [functions.process-memory]
-verify_jwt = false
+verify_jwt = true
 
 # Memory system - Cold path (cron-triggered, service role)
 [functions.run-periodic-analysis]
-verify_jwt = false
+verify_jwt = true
 
 # Calendar availability check
 [functions.check-availability]
-verify_jwt = false
+verify_jwt = true
 
 # Company enrichment
 [functions.enrich-company]
-verify_jwt = false
+verify_jwt = true
 
 [functions.enrich-contacts-batch]
-verify_jwt = false
+verify_jwt = true
 
 # Batch briefing generator (cron-triggered)
 [functions.generate-all-briefings]
-verify_jwt = false
+verify_jwt = true
 
 # Embedding generation (called by other functions)
 [functions.generate-embedding]
-verify_jwt = false
+verify_jwt = true
 
 # Calendar push notification management
 [functions.google-calendar-watch]
-verify_jwt = false
+verify_jwt = true
 
 # Calendar webhook receiver
 [functions.google-calendar-webhook]
@@ -219,36 +223,36 @@ verify_jwt = false
 
 # Sales pattern learning (cron-triggered)
 [functions.learn-sales-patterns]
-verify_jwt = false
+verify_jwt = true
 
 # Meeting prep alerts (cron-triggered)
 [functions.meeting-prep-alert]
-verify_jwt = false
+verify_jwt = true
 
 # Notification processing (cron-triggered)
 [functions.notification-queue-processor]
-verify_jwt = false
+verify_jwt = true
 
 # File processing
 [functions.process-files]
-verify_jwt = false
+verify_jwt = true
 
 # Sequence engine (cron-triggered)
 [functions.process-sequences]
-verify_jwt = false
+verify_jwt = true
 
 # Workflow engine (cron-triggered)
 [functions.process-workflows]
-verify_jwt = false
+verify_jwt = true
 
 # Scheduling email sender
 [functions.send-scheduling-email]
-verify_jwt = false
+verify_jwt = true
 
 # Calendar sync to CRM
 [functions.sync-calendar-to-crm]
-verify_jwt = false
+verify_jwt = true
 
 # Email sync to CRM (cron-triggered)
 [functions.sync-email-to-crm]
-verify_jwt = false
+verify_jwt = true

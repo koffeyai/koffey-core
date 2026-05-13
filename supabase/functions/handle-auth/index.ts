@@ -1,8 +1,18 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "npm:@supabase/supabase-js@2.50.0"
 import { getCorsHeaders, handleCorsOptions } from '../_shared/cors.ts';
+import { checkRateLimit } from '../_shared/security.ts';
 
 let corsHeaders = getCorsHeaders();
+
+function getRequesterIp(req: Request): string {
+  const forwarded = req.headers.get('x-forwarded-for');
+  if (forwarded) {
+    const first = forwarded.split(',')[0]?.trim();
+    if (first) return first;
+  }
+  return req.headers.get('x-real-ip')?.trim() || 'unknown';
+}
 
 serve(async (req) => {
   // Handle CORS preflight requests
@@ -17,7 +27,27 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
-    const { email, type, inviteCode } = await req.json() // type: 'signin' | 'signup', inviteCode: optional
+    const { email: rawEmail, type, inviteCode } = await req.json() // type: 'signin' | 'signup', inviteCode: optional
+    const email = String(rawEmail || '').trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || !['signin', 'signup'].includes(type)) {
+      return new Response(JSON.stringify({ error: 'Invalid auth request' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      })
+    }
+
+    const rate = checkRateLimit(`handle-auth:${getRequesterIp(req)}:${email}`, {
+      requests: 10,
+      windowMs: 60_000,
+      blockDurationMs: 300_000,
+    });
+    if (!rate.allowed) {
+      return new Response(JSON.stringify({ error: 'Too many auth checks. Please try again later.' }), {
+        status: 429,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      })
+    }
+
     const domain = email.split('@')[1]
     
     console.log('Handle auth request:', { email, type, domain, hasInviteCode: !!inviteCode })
