@@ -39,6 +39,7 @@ repo_dump*.txt
 dump_repo.py
 debug-staging.js
 *.png
+!docs/screenshots/*.png
 staging-debug.png
 mvp-*.png
 

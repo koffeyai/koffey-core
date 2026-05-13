@@ -6,6 +6,18 @@ Koffey replaces the traditional CRM UI with a conversational AI agent. Talk to y
 
 Built on the **Gateway + Skills + Channels** architecture: one AI brain, pluggable capabilities, multiple delivery surfaces.
 
+## Product Preview
+
+<p>
+  <img src="docs/screenshots/02-command-center-desktop.png" alt="Koffey command center desktop view" width="100%">
+</p>
+
+| CRM workspace | SCOUTPAD deal analysis |
+| --- | --- |
+| <img src="docs/screenshots/04-deals-desktop.png" alt="Deals pipeline desktop view" width="100%"> | <img src="docs/screenshots/11-acme-scoutpad-analysis.png" alt="SCOUTPAD deal analysis" width="100%"> |
+
+More desktop and mobile screenshots are available in [docs/screenshots](docs/screenshots).
+
 ## Project Status
 
 - Actively maintained
