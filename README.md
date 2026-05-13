@@ -1,8 +1,8 @@
 # Koffey.ai
 
-**AI-native, chat-first CRM for sales teams.** | [Website](https://www.koffey.ai)
+**AI-native, chat-first CRM for B2B tech sales teams.** | [Website](https://www.koffey.ai)
 
-Koffey replaces the traditional CRM UI with a conversational AI agent. Talk to your CRM like you'd talk to a colleague — create deals, update contacts, get pipeline insights, schedule meetings, and draft emails, all through natural language.
+Koffey replaces the traditional CRM UI with a conversational AI agent built for B2B tech sales workflows. Talk to your CRM like you'd talk to a colleague — create deals, update contacts, get pipeline insights, schedule meetings, and draft emails, all through natural language.
 
 Built on the **Gateway + Skills + Channels** architecture: one AI brain, pluggable capabilities, multiple delivery surfaces.
 
