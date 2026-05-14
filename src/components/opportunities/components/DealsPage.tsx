@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Plus, Search, Filter, MoreHorizontal } from 'lucide-react';
+import { Plus, Search, Filter, MoreHorizontal, Trash2 } from 'lucide-react';
 import { useAuth } from '@/components/auth/AuthProvider';
 import { toast } from '@/hooks/use-toast';
 import { useDialogStore } from '@/stores/dialogStore';
@@ -83,10 +83,12 @@ export function DealsPage({ onDealClick, onCoachDeal }: DealsPageProps) {
     createEntity,
     updateEntity,
     deleteEntity,
+    bulkOperations,
     refresh: refreshDeals,
     isCreating,
     isUpdating,
-    isDeleting
+    isDeleting,
+    isBulkDeleting
   } = useCRM<any>('deals');
 
   // Transform deals to match component interface
@@ -115,6 +117,7 @@ export function DealsPage({ onDealClick, onCoachDeal }: DealsPageProps) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingDeal, setEditingDeal] = useState<Deal | null>(null);
   const [dealPendingDelete, setDealPendingDelete] = useState<Deal | null>(null);
+  const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false);
   const { openCoachingDialog } = useDialogStore();
   const [formData, setFormData] = useState({
     name: '',
@@ -191,6 +194,7 @@ export function DealsPage({ onDealClick, onCoachDeal }: DealsPageProps) {
     try {
       await deleteEntity(dealPendingDelete.id);
       toast({ title: 'Success', description: 'Deal deleted successfully' });
+      setSelectedDeals(prev => prev.filter(id => id !== dealPendingDelete.id));
       setDealPendingDelete(null);
     } catch (error: any) {
       toast({ 
@@ -198,6 +202,18 @@ export function DealsPage({ onDealClick, onCoachDeal }: DealsPageProps) {
         description: error.message || 'Failed to delete deal', 
         variant: 'destructive' 
       });
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedDeals.length === 0) return;
+
+    try {
+      await bulkOperations.delete(selectedDeals);
+      setSelectedDeals([]);
+      setIsBulkDeleteOpen(false);
+    } catch {
+      // Error toast is handled by useCRM.
     }
   };
 
@@ -268,7 +284,7 @@ export function DealsPage({ onDealClick, onCoachDeal }: DealsPageProps) {
   const handleDealSelect = (dealId: string, selected: boolean) => {
     setSelectedDeals(prev => 
       selected 
-        ? [...prev, dealId]
+        ? (prev.includes(dealId) ? prev : [...prev, dealId])
         : prev.filter(id => id !== dealId)
     );
   };
@@ -293,6 +309,11 @@ export function DealsPage({ onDealClick, onCoachDeal }: DealsPageProps) {
       default: return 'text-gray-600';
     }
   };
+
+  const selectedDealRecords = deals.filter(deal => selectedDeals.includes(deal.id));
+  const bulkDeleteEntityName = selectedDeals.length === 1
+    ? selectedDealRecords[0]?.dealName || selectedDealRecords[0]?.name || 'Selected deal'
+    : `${selectedDeals.length} selected deals`;
 
   return (
     <div className="p-6 space-y-6">
@@ -511,8 +532,19 @@ export function DealsPage({ onDealClick, onCoachDeal }: DealsPageProps) {
             </Button>
           </div>
           {selectedDeals.length > 0 && (
-            <div className="text-sm text-muted-foreground">
-              {selectedDeals.length} deal{selectedDeals.length === 1 ? '' : 's'} selected
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-muted-foreground">
+                {selectedDeals.length} deal{selectedDeals.length === 1 ? '' : 's'} selected
+              </span>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setIsBulkDeleteOpen(true)}
+                disabled={isBulkDeleting}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete selected
+              </Button>
             </div>
           )}
         </div>
@@ -541,6 +573,18 @@ export function DealsPage({ onDealClick, onCoachDeal }: DealsPageProps) {
         entityName={dealPendingDelete?.dealName || dealPendingDelete?.name || ''}
         entityType="deal"
         requireConfirmation
+      />
+
+      <DeleteConfirmationDialog
+        open={isBulkDeleteOpen}
+        onOpenChange={setIsBulkDeleteOpen}
+        onConfirm={handleBulkDelete}
+        title={`Delete ${selectedDeals.length} deal${selectedDeals.length === 1 ? '' : 's'}`}
+        description={`This will permanently delete ${selectedDeals.length} selected deal${selectedDeals.length === 1 ? '' : 's'} and record the operation in the audit log. Use stage changes for close-won or close-lost outcomes.`}
+        entityName={bulkDeleteEntityName}
+        entityType="deal"
+        requireConfirmation
+        confirmLabel={`Delete ${selectedDeals.length} deal${selectedDeals.length === 1 ? '' : 's'}`}
       />
     </div>
   );

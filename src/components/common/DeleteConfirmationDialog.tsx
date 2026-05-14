@@ -27,6 +27,7 @@ interface DeleteConfirmationDialogProps {
   showRelatedWarning?: boolean;
   relatedItems?: string[];
   loading?: boolean;
+  confirmLabel?: string;
 }
 
 export const DeleteConfirmationDialog: React.FC<DeleteConfirmationDialogProps> = ({
@@ -40,7 +41,8 @@ export const DeleteConfirmationDialog: React.FC<DeleteConfirmationDialogProps> =
   requireConfirmation = false,
   showRelatedWarning = false,
   relatedItems = [],
-  loading = false
+  loading = false,
+  confirmLabel
 }) => {
   const [confirmationText, setConfirmationText] = useState('');
   const [acknowledgeWarning, setAcknowledgeWarning] = useState(false);
@@ -222,7 +224,7 @@ export const DeleteConfirmationDialog: React.FC<DeleteConfirmationDialogProps> =
             ) : (
               <div className="flex items-center gap-2">
                 <Trash2 className="h-4 w-4" />
-                Delete {entityType}
+                {confirmLabel ?? `Delete ${entityType}`}
               </div>
             )}
           </AlertDialogAction>

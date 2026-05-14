@@ -649,6 +649,14 @@ export function useCRM<T extends { id: string }>(
       }
 
       return await retryWithUserFeedback(async () => {
+        const { data: recordsToDelete, error: fetchError } = await supabase
+          .from(config.table as any)
+          .select('*')
+          .in('id', ids)
+          .eq('organization_id', organizationId);
+
+        if (fetchError) throw fetchError;
+
         const { error } = await supabase
           .from(config.table as any)
           .delete()
@@ -656,6 +664,13 @@ export function useCRM<T extends { id: string }>(
           .eq('organization_id', organizationId);
 
         if (error) throw error;
+
+        await Promise.all(
+          (recordsToDelete || []).map((record: any) =>
+            logAudit('delete', String(record.id), record, undefined)
+          )
+        );
+
         return ids;
       });
     },
